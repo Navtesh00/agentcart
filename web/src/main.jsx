@@ -18,7 +18,7 @@ function App() {
     const o = await fetch('/api/orders').then(r=>r.json());
     setOrders(o.orders||[]);
   };
-  useEffect(()=>{ load(); const h=document.querySelector('.site-header'); const onScroll=()=>h?.classList.toggle('scrolled', window.scrollY>40); window.addEventListener('scroll', onScroll, {passive:true}); return ()=>window.removeEventListener('scroll', onScroll); }, []);
+  useEffect(()=>{ load(); const h=document.querySelector('.site-header'); const onScroll=()=>h?.classList.toggle('scrolled', window.scrollY>40); window.addEventListener('scroll', onScroll, {passive:true}); const keepAlive=setInterval(()=> fetch('/api/health').catch(()=>{}), 60000); return ()=>{ window.removeEventListener('scroll', onScroll); clearInterval(keepAlive); }; }, []);
 
   const add = (id) => setCart(prev=> {
     const f = prev.find(x=>x.id===id);
@@ -43,6 +43,14 @@ function App() {
     if(j.error) setMsg(`Bounded block: ${j.error} → Fallback Payment Link ${j.fallback?.short_url||''} (audit ${j.audit?.id}) — This is the graceful failure for video.`);
     else setMsg(`Paid — Order ${j.order.id} · Razorpay ${j.order.razorpay_order_id} · Rs ${j.order.amount/100} · audit ${j.audit.id} · ${j.order.explainability.why}`);
     setCart([]); load();
+  };
+  const tryOverLimit = async () => {
+    if(!reserve) return setMsg("First create Reserve Rs 10,000 — then over-limit demo will block as expected.");
+    const body = { items: [{id:"p2", qty:15}], reserve_id: reserve.id };
+    const j = await fetch('/api/checkout/create', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}).then(r=>r.json());
+    if(j.error) setMsg(`✓ Bounded block demonstrated: ${j.error} → Fallback ${j.fallback?.short_url} (audit ${j.audit?.id}) — This is the core safety mechanic judges want.`);
+    else setMsg(`Unexpected: over-limit passed ${j.order?.id}`);
+    load();
   };
   const [aiInput, setAiInput] = useState("Get me vegetarian dinner for two under 700");
   const [aiReply, setAiReply] = useState("");
@@ -165,7 +173,7 @@ function App() {
             <a href="#helps" className="btn-ghost">How it helps</a>
             <a href="https://github.com/Navtesh00/agentcart" target="_blank" className="btn-ghost">View code</a>
           </div>
-          <p className="micro-label">Mock mode — no keys needed · Real Orders with rzp_test keys</p>
+          <p className="micro-label">Live — Hotel Pranjal (Pure Veg) · Bounded Reserve Pay 10k/90d · Vercel serverless (no sleep)</p>
           <div className="flow">
             <div className="flow-step"><b>1</b><span>Block Rs10k</span></div>
             <div className="flow-step"><b>2</b><span>Chat orders</span></div>
@@ -232,9 +240,9 @@ function App() {
 
       {/* LIVE DEMO — the only place to try */}
       <section id="demo" className="container section-pad" style={{background:'rgba(255,255,255,.01)', borderTop:'1px solid rgba(122,140,192,.08)', borderBottom:'1px solid rgba(122,140,192,.08)'}}>
-        <div className="hairline"/><p className="micro-label micro-label--brass">04 — Live demo (mock mode if no keys)</p>
+        <div className="hairline"/><p className="micro-label micro-label--brass">04 — Live demo (Vercel serverless · Razorpay Test Mode ready)</p>
         <h2 className="display-lg">Try the bounded checkout yourself.</h2>
-        <p style={{color:'var(--stone)', margin:'.4rem 0 .2rem'}}>No Razorpay keys needed. With test keys, set <span className="mono">RAZORPAY_KEY_ID</span> in <span className="mono">.env</span> to hit real <span className="mono">success@razorpay</span>.</p>
+        <p style={{color:'var(--stone)', margin:'.4rem 0 .2rem'}}>Works without keys (mock Orders). Add <span className="mono">RAZORPAY_KEY_ID</span> env to hit real <span className="mono">success@razorpay</span> — no code change.</p>
         <div className="demo-grid">
           <div className="panel">
             <div style={{display:'flex',gap:'.5rem',flexWrap:'wrap',alignItems:'center'}}>
@@ -254,9 +262,10 @@ function App() {
             <h3 className="display-md" style={{fontSize:'1.1rem'}}>Cart — bounded by reserve</h3>
             <p className="micro-label" style={{margin:'.2rem 0 .4rem'}}>{cart.length===0?'Empty — add a dish': `${cart.length} items · Total Rs ${totalPaise/100}`}</p>
             {cart.map(ci=>{const p=catalog.find(x=>x.id===ci.id); return <div key={ci.id} className="cart-line"><span>{p?.name||ci.id} × {ci.qty}</span><span><button onClick={()=>dec(ci.id)} style={{background:'transparent', border:'1px solid rgba(122,140,192,.18)', color:'var(--stone)', borderRadius:4, padding:'2px 6px', cursor:'pointer', marginRight:6}}>−</button><button onClick={()=>add(ci.id)} style={{background:'transparent', border:'1px solid rgba(122,140,192,.18)', color:'var(--stone)', borderRadius:4, padding:'2px 6px', cursor:'pointer'}}>+</button></span></div>})}
-            <div style={{display:'flex',gap:'.6rem',marginTop:'.8rem'}}>
-              <button className="btn-primary" onClick={checkout} style={{flex:1}}>Checkout {reserve?'via Reserve debit':'direct'}</button>
+            <div style={{display:'flex',gap:'.6rem',marginTop:'.8rem', flexWrap:'wrap'}}>
+              <button className="btn-primary" onClick={checkout} style={{flex:1, minWidth:140}}>Checkout {reserve?'via Reserve debit':'direct'}</button>
               <button className="btn-ghost" onClick={()=>setCart([])}>Clear</button>
+              <button className="btn-ghost" onClick={tryOverLimit} style={{borderColor:'rgba(255,138,91,.4)', color:'#ffd2c2'}}>Try over-limit → block + fallback link</button>
             </div>
             <p className="mono" style={{marginTop:'.6rem', color:'var(--stone)'}}>MCP test: ask Claude/Cursor — <b style={{color:'var(--bone)'}}>list catalog under 200</b> → <b style={{color:'var(--bone)'}}>create checkout for p3 x2 + p5 x1</b> (calls POST /api/checkout/create bounded)</p>
             <div className="metric">
@@ -298,7 +307,7 @@ function App() {
       </section>
 
       <footer className="container footer">
-        <span>© AgentCart — Razorpay Buildathon Track 01 · Mock mode if no keys · <a href="https://github.com/Navtesh00/agentcart" target="_blank" style={{color:'var(--clay)', textDecoration:'underline'}}>github.com/Navtesh00/agentcart</a></span>
+        <span>© AgentCart — Razorpay Buildathon Track 01 · Vercel serverless · <a href="https://github.com/Navtesh00/agentcart" target="_blank" style={{color:'var(--clay)', textDecoration:'underline'}}>github.com/Navtesh00/agentcart</a></span>
         <span>Design tokens from <span className="mono">hernessagent/masque-v2</span> — Fraunces + Instrument Sans, one accent #5B6CF0, hairline --brass, ink --ink. Research in <span className="mono">research/</span> per task.</span>
       </footer>
     </main>
