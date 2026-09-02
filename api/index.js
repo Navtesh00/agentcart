@@ -2,9 +2,9 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import crypto from "crypto";
-import { listCatalog, getProduct, calcTotal } from "./catalog.js";
-import { reserves, orders, debits, audits, nextId, audit, resetStore } from "./store.js";
-import { createOrder, createPaymentLink, getRazorpay } from "./razorpay.js";
+import { listCatalog, getProduct, calcTotal } from "../server/src/catalog.js";
+import { reserves, orders, debits, audits, nextId, audit, resetStore } from "../server/src/store.js";
+import { createOrder, createPaymentLink, getRazorpay } from "../server/src/razorpay.js";
 
 dotenv.config();
 const app = express();
