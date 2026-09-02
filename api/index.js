@@ -15,8 +15,9 @@ const PORT = process.env.PORT || 3001;
 const RESERVE_MAX = parseInt(process.env.RESERVE_MAX_BLOCK || "10000", 10) * 100; // paise
 const RESERVE_DAYS = parseInt(process.env.RESERVE_VALID_DAYS || "90", 10);
 
-// Health
+// Health - support both /health and /api/health for Vercel rewrites
 app.get("/health", (req, res) => res.json({ ok: true, mock: !getRazorpay(), reserve_max_paise: RESERVE_MAX, time: new Date().toISOString() }));
+app.get("/api/health", (req, res) => res.json({ ok: true, mock: !getRazorpay(), reserve_max_paise: RESERVE_MAX, time: new Date().toISOString() }));
 app.get("/api/catalog", (req, res) => {
   const { q, price_min, price_max, category } = req.query;
   const r = listCatalog({ query: q, price_min: price_min ? Number(price_min) : null, price_max: price_max ? Number(price_max) : null, category });
