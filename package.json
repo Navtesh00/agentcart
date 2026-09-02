@@ -1,0 +1,14 @@
+{
+  "name": "agentcart",
+  "private": true,
+  "version": "1.0.0",
+  "description": "AgentCart — Track 01 AI Growth & Agentic Commerce — Razorpay Buildathon",
+  "workspaces": ["server", "mcp-server", "web"],
+  "scripts": {
+    "dev:server": "npm --workspace server run dev",
+    "dev:web": "npm --workspace web run dev",
+    "dev:mcp": "npm --workspace mcp-server run dev",
+    "test": "npm --workspace server run test",
+    "build": "npm --workspace server run build && npm --workspace mcp-server run build && npm --workspace web run build"
+  }
+}
