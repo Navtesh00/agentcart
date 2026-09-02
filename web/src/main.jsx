@@ -44,8 +44,33 @@ function App() {
     else setMsg(`Paid — Order ${j.order.id} · Razorpay ${j.order.razorpay_order_id} · Rs ${j.order.amount/100} · audit ${j.audit.id} · ${j.order.explainability.why}`);
     setCart([]); load();
   };
+  const [aiInput, setAiInput] = useState("Get me vegetarian dinner for two under 700");
+  const [aiReply, setAiReply] = useState("");
   const totalPaise = cart.reduce((s,ci)=>{ const p=catalog.find(x=>x.id===ci.id); return s + (p? p.price*ci.qty:0)},0);
   const filtered = catalog.filter(p=> !filter || (p.name+p.category+p.desc).toLowerCase().includes(filter.toLowerCase()));
+  const askAI = () => {
+    // practical AI simulation: parses natural language, searches catalog, builds bounded cart -- same as MCP list_catalog + create_agent_checkout
+    const q = aiInput.toLowerCase();
+    const budget = (()=>{ const m=q.match(/under\s*₹?\s*(\d+)/); return m? parseInt(m[1],10): 700; })();
+    const wantPaneer = q.includes("paneer");
+    const wantVeg = q.includes("veg");
+    const people = q.includes("two")?2: q.includes("3")?3:2;
+    let pool = catalog.filter(p=> !wantVeg || p.veg!==false);
+    if(wantPaneer) pool = pool.filter(p=> p.category==="paneer" || p.name.toLowerCase().includes("paneer"));
+    // pick cheapest combo under budget
+    pool.sort((a,b)=>a.price-b.price);
+    let pick=[], sum=0;
+    for(const p of pool){ if(sum + p.price <= budget*100){ pick.push({id:p.id, qty:1}); sum+=p.price; if(pick.length>=people+1) break; } }
+    if(pick.length===0) pick=[{id:catalog[0].id, qty:1}];
+    const total = pick.reduce((s,ci)=> sum = catalog.find(x=>x.id===ci.id).price*ci.qty + s,0);
+    // bounded check preview
+    const viaReserve = reserve ? `via Reserve ${reserve.id.slice(0,8)}… remaining Rs ${reserve.remaining/100}` : "via direct checkout (no reserve yet — click Create Reserve first for bounded debit)";
+    const names = pick.map(ci=> { const p=catalog.find(x=>x.id===ci.id); return `${p.name} Rs${p.price/100}×${ci.qty}`}).join(", ");
+    setAiReply(`AI understood: budget Rs${budget}, people ${people}${wantPaneer?" paneer":""} → searched Hotel Pranjal catalog (${pool.length} veg matches) → picked ${names} = Rs${pick.reduce((s,ci)=>s+catalog.find(x=>x.id===ci.id).price*ci.qty,0)/100} ≤${budget} · ${viaReserve} · Why: vegetarian, in stock, cheapest under budget. [MCP: list_catalog → create_agent_checkout → bounded check → audit]`);
+    // auto-fill cart for practical checkout
+    setCart(pick);
+    setMsg(`AI filled cart: ${names} — click Checkout to pay ${viaReserve}`);
+  };
 
   return <>
     <style>{`
@@ -187,9 +212,27 @@ function App() {
         </div>
       </section>
 
+      {/* AI CHAT — practical experience: tell AI to order */}
+      <section id="ai-chat" className="container section-pad">
+        <div className="hairline"/><p className="micro-label micro-label--brass">03 — Practical AI experience: tell the AI to order</p>
+        <h2 className="display-lg" style={{maxWidth:'22ch'}}>Tell the AI: "Go to Hotel Pranjal and order something"</h2>
+        <p style={{color:'var(--stone)', margin:'.4rem 0 .8rem', maxWidth:'60ch'}}>Type natural language like <span className="mono">"Get me vegetarian dinner for two under ₹700"</span> or <span className="mono">"Paneer for 3 under 800"</span>. The AI parses intent, calls <span className="mono">list_catalog</span> + <span className="mono">create_agent_checkout</span> on <span className="mono">hotelpranjal.in</span> mirrored catalog, bounded by your Reserve.</p>
+        <div className="panel" style={{display:'grid', gap:'.7rem'}}>
+          <div style={{display:'flex', gap:'.6rem', flexWrap:'wrap'}}>
+            <input value={aiInput} onChange={e=>setAiInput(e.target.value)} placeholder='e.g. Get me dinner for two under 700' style={{flex:1, minWidth:240, background:'var(--ink)', border:'1px solid rgba(122,140,192,.18)', color:'var(--bone)', borderRadius:6, padding:'.8rem .9rem', fontSize:'.9rem'}}/>
+            <button className="btn-primary" onClick={askAI}>Ask AI to order →</button>
+          </div>
+          <div style={{background:'rgba(91,108,240,.08)', border:'1px solid rgba(91,108,240,.14)', borderRadius:8, padding:'.8rem', minHeight:60}}>
+            <p className="micro-label">AI reply (MCP trace)</p>
+            <p style={{color:'var(--bone)', fontSize:'.92rem', lineHeight:1.6, marginTop:'.3rem', whiteSpace:'pre-wrap'}}>{aiReply || 'Try: "Get me vegetarian dinner for two under 700" — AI will search Hotel Pranjal catalog, build a bounded cart, and fill the demo cart below for you to Checkout.'}</p>
+          </div>
+          <p className="mono" style={{color:'var(--stone)', fontSize:'.72rem'}}>Real LLM path: same tools via <span className="mono">mcp-server/src/index.js</span> at <span className="mono">https://mcp.razorpay.com/mcp</span> — Claude config `AGENTCART_API=http://localhost:3001`</p>
+        </div>
+      </section>
+
       {/* LIVE DEMO — the only place to try */}
       <section id="demo" className="container section-pad" style={{background:'rgba(255,255,255,.01)', borderTop:'1px solid rgba(122,140,192,.08)', borderBottom:'1px solid rgba(122,140,192,.08)'}}>
-        <div className="hairline"/><p className="micro-label micro-label--brass">03 — Live demo (mock mode if no keys)</p>
+        <div className="hairline"/><p className="micro-label micro-label--brass">04 — Live demo (mock mode if no keys)</p>
         <h2 className="display-lg">Try the bounded checkout yourself.</h2>
         <p style={{color:'var(--stone)', margin:'.4rem 0 .2rem'}}>No Razorpay keys needed. With test keys, set <span className="mono">RAZORPAY_KEY_ID</span> in <span className="mono">.env</span> to hit real <span className="mono">success@razorpay</span>.</p>
         <div className="demo-grid">
@@ -229,7 +272,7 @@ function App() {
 
       {/* AUDIT */}
       <section id="audit" className="container section-pad">
-        <div className="hairline"/><p className="micro-label micro-label--brass">04 — Trust: explainable, bounded, gated</p>
+        <div className="hairline"/><p className="micro-label micro-label--brass">05 — Trust: explainable, bounded, gated</p>
         <h2 className="display-lg" style={{maxWidth:'20ch'}}>Every rupee has a reason.</h2>
         <div className="arch-grid">
           <div className="panel">
