@@ -1,1 +1,1 @@
-{ "framework": "vite", "buildCommand": "npm --workspace web run build", "outputDirectory": "web/dist", "rewrites": [{ "source": "/api/(.*)", "destination": "/api/index.js" }] }
+{ "framework": "vite", "buildCommand": "npm --prefix web install --silent && npm --prefix web run build", "outputDirectory": "web/dist", "rewrites": [{ "source": "/api/(.*)", "destination": "/api/index.js" }] }
