@@ -1,0 +1,23 @@
+{
+  "source": "https://razorpay.com/docs/api/orders/create/ + https://razorpay.com/docs/api/payments/payment-links/create-standard + https://razorpay.com/docs/payments/payments/test-upi-details/",
+  "orders": {
+    "endpoint": "POST https://api.razorpay.com/v1/orders",
+    "auth": "Basic key_id:key_secret",
+    "params": { "amount": "paise integer (eg 29900 = Rs299)", "currency": "INR", "receipt": "unique 40 chars", "notes": "15 KV 256 chars each", "partial_payment": "bool" },
+    "importance": "Prevents multiple payments, secures amount via order_id tamper-proof",
+    "response": { "id": "order_xxx" },
+    "verify": "Verify razorpay_signature server-side via razorpay_payment_id + order_id + signature"
+  },
+  "payment_links": {
+    "endpoint": "POST https://api.razorpay.com/v1/payment_links",
+    "types": ["Standard Payment Link (test supported) vs UPI Link (upi_link:true NOT supported in Test Mode)"],
+    "test_limit": "30 Payment Links per business in test mode",
+    "params": ["amount paise", "upi_link boolean", "callback_url", "callback_method", "customer {name,contact,email}", "notes", "expire_by"],
+    "test_flow": "Copy link -> select Success/Failure to test"
+  },
+  "test_upi": {
+    "ids": ["success@razorpay (success)", "failure@razorpay (failure)"],
+    "note": "payment cancellation in test results in success; use live to test cancellation",
+    "amount_based_errors": "amount paise determines error scenario for failure@razorpay"
+  }
+}

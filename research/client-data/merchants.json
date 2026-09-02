@@ -1,0 +1,7 @@
+[
+  { "id": "demo-deli", "name": "Demo Deli (restaurant)", "type": "D2C food", "location": "Bangalore", "avg_order": 350, "monthly_orders": 1200, "razorpay_mode": "Payment Gateway + Links", "pain": "70% checkout drop + not AI-buyable", "test_mode": true },
+  { "id": "bigbasket-like", "name": "Grocery Mock (bigbasket pattern)", "type": "grocery", "pain": "Replenishment via chat not transactable" },
+  { "id": "fashion-d2c", "name": "Fashion D2C Mock", "type": "fashion", "pain": "High AOV card success needs friction-less checkout" },
+  { "id": "saas-sub", "name": "SaaS Subscriptions Mock", "type": "saas", "pain": "Failed mandates 12%" },
+  { "id": "replit-builder", "name": "Replit Builder App", "type": "builder", "pain": "Monetisation after prototype slow" }
+]

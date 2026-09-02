@@ -1,0 +1,18 @@
+{
+  "source": "https://razorpay.com/docs/mcp-server/ + https://github.com/razorpay/razorpay-mcp-server + https://razorpay.com/docs/mcp-server/remote/",
+  "name": "Razorpay MCP Server 1.0",
+  "protocol": "Model Context Protocol (MCP) — AI models interact with external tools via common connection",
+  "deployment": {
+    "remote": "Hosted https://mcp.razorpay.com/mcp streamable HTTP (deprecated https://mcp.razorpay.com/sse Aug 13 2025), npx mcp-remote, zero infra",
+    "local": "Docker razorpay/mcp, self-hosted, full control, all tools"
+  },
+  "tools_35_plus": ["Payments: capture/fetch/manage", "Orders: create/manage", "Payment Links: generate/share", "Refunds", "QR Codes", "Settlements/reconciliation", "Payouts", "Standard Checkout: detect_stack, integrate_razorpay_checkout"],
+  "example_tools": ["capture_payment", "fetch_payment", "fetch_all_payments", "detect_stack", "integrate_razorpay_checkout"],
+  "config": { "RAZORPAY_KEY_ID": "xxx", "RAZORPAY_KEY_SECRET": "xxx", "TOOLSETS": "all", "READ_ONLY": false },
+  "auth_option": "OAuth 2.0 via https://mcp.razorpay.com/.well-known/oauth-authorization-server + /register Dynamic Client Registration",
+  "agentcart_mapping": {
+    "our_tools": ["list_catalog", "get_product", "create_agent_checkout (bounded)", "create_reserve", "get_reserve_status"],
+    "proxied": ["Razorpay Remote MCP fetch_all_payments etc for dashboard"]
+  },
+  "endpoint": "https://mcp.razorpay.com/mcp"
+}

@@ -1,0 +1,17 @@
+{
+  "needed_now": [
+    { "tool": "Node 24 + npm 12", "status": "have (v24.18.0 / 12.0.2)", "use": "server/mcp/web" },
+    { "tool": "Vite 5.4", "status": "have", "use": "web build 146kB" },
+    { "tool": "Express + Razorpay SDK 2.9", "status": "have", "use": "orders/payment_links" },
+    { "tool": "MCP SDK 1.10", "status": "have", "use": "mcp-server stdio" },
+    { "tool": "Git", "status": "have 2.55.0", "use": "push to Navtesh00/agentcart" }
+  ],
+  "need_from_you_if_you_want_next_steps": [
+    { "resource": "Razorpay Test Keys (key_id + key_secret from dashboard.razorpay.com)", "why": "To flip mock:false and hit real Orders API with success@razorpay, optional for now", "where_to_store": ".env not committed, example in .env.example", "required": false },
+    { "resource": "Vercel account approval (click https://vercel.com/new -> Import Navtesh00/agentcart)", "why": "To get live URL https://agentcart-xxx.vercel.app, no CLI needed", "required": false },
+    { "resource": "GitHub PAT if you prefer token push vs credential manager", "why": "Alternative to browser credential, not needed now since push succeeded", "required": false },
+    { "resource": "Figma link if you have design, otherwise I generate wireframe in tasks-data/03_ux.json", "why": "For pitch visual, optional", "required": false }
+  ],
+  "not_needed": ["No DB server — SQLite Maps mock", "No paid services — all test-mode"],
+  "next_action": "You already approved GitHub push (7b26f25). For full staged build, approve Vercel import OR provide test keys — tell me which and I continue collecting per-task data without building in one go."
+}

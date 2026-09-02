@@ -1,0 +1,11 @@
+{
+  "source": "https://razorpay.com/docs/payments/recurring-payments/upi-reserve-pay/ + https://razorpay.com/blog/upi-reserve-pay + https://razorpay.com/docs/payments/recurring-payments/upi-reserve-pay?preferred-country=IN",
+  "name": "UPI Reserve Pay SBMD (Single Block Multi Debit)",
+  "status": "Live",
+  "flow": ["Customer Reserves Funds via UPI PIN authorisation (block)", "Deliver service", "Automatic debit exact amount from pre-approved limit", "Guaranteed settlement"],
+  "limits": { "max_block": "INR 10000", "token_validity": "90 days", "debits": "Multiple until exhausted or expired" },
+  "benefits": ["One-time setup PIN", "No repeated PIN per debit", "Transparent control in UPI apps, revocable", "Instant"],
+  "requirements": ["Request Support to activate", "Business category supports mandate SBMD"],
+  "npci_quote": "UPI was built to make digital payments simple, secure, universal, Agentic Payments takes vision into next era. With UPI Reserve Pay, users give consent once and allow intelligent systems to transact within controlled transparent way.",
+  "use_for_agentcart": "Simulate SBMD: create reserve block -> store remaining/balance/expiry/consent_txn_id -> gate every debit total <= remaining, log audit, fallback to Payment Link if exceeds. Mirrors live limits for Buildathon bar."
+}

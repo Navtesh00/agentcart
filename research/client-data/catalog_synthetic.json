@@ -1,0 +1,14 @@
+{
+  "merchant": "demo-deli",
+  "products": [
+    { "id": "p1", "name": "Margherita Pizza", "price_paise": 29900, "stock": 100, "category": "pizza" },
+    { "id": "p2", "name": "Paneer Tikka Pizza", "price_paise": 39900, "stock": 80, "category": "pizza" },
+    { "id": "p3", "name": "Veg Burger", "price_paise": 14900, "stock": 120, "category": "burger" },
+    { "id": "p4", "name": "Chicken Burger", "price_paise": 19900, "stock": 60, "category": "burger" },
+    { "id": "p5", "name": "Coke 300ml", "price_paise": 4000, "stock": 200, "category": "beverage" },
+    { "id": "p6", "name": "Fries Large", "price_paise": 9900, "stock": 150, "category": "sides" },
+    { "id": "p7", "name": "Garlic Bread", "price_paise": 12900, "stock": 90, "category": "sides" },
+    { "id": "p8", "name": "Chocolate Brownie", "price_paise": 8900, "stock": 70, "category": "dessert" }
+  ],
+  "notes": "Used by server/src/catalog.js, agent-readable via /llms.txt and GET /api/catalog"
+}
