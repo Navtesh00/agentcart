@@ -1,0 +1,16 @@
+{
+  "projectId": "prj_qbO4eEyNSp046DZ60FUnJzk2G2hP",
+  "orgId": "team_GYqcrkK8MkQVTFzC89RnJVP2",
+  "projectName": "agentcart",
+  "settings": {
+    "createdAt": 1788381579050,
+    "framework": "vite",
+    "devCommand": null,
+    "installCommand": null,
+    "buildCommand": "npm --prefix web install --silent && npm --prefix web run build",
+    "outputDirectory": "web/dist",
+    "rootDirectory": null,
+    "directoryListing": false,
+    "nodeVersion": "24.x"
+  }
+}

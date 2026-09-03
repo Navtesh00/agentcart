@@ -1,0 +1,18 @@
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'D:\MunderDifflin\agentcart\web\node_modules\vite\bin\vite.js'
+[90m    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)[39m
+[90m    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)[39m
+[90m    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)[39m
+[90m    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)[39m
+[90m    at Module._load (node:internal/modules/cjs/loader:1294:5)[39m
+[90m    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)[39m
+[90m    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)[39m
+[90m    at node:internal/main/run_main_module:33:47[39m {
+  code: [32m'MODULE_NOT_FOUND'[39m,
+  requireStack: []
+}
+
+Node.js v24.18.0

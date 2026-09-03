@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import crypto from "crypto";
-import { listCatalog, getProduct, calcTotal } from "../server/src/catalog.js";
+import { listCatalog, getProduct, calcTotal, categoriesData } from "../server/src/catalog.js";
 import { reserves, orders, debits, audits, nextId, audit, resetStore } from "../server/src/store.js";
 import { createOrder, createPaymentLink, getRazorpay, getMode } from "../server/src/razorpay.js";
 
@@ -12,10 +12,9 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
-const RESERVE_MAX = parseInt(process.env.RESERVE_MAX_BLOCK || "10000", 10) * 100; // paise
+const RESERVE_MAX = parseInt(process.env.RESERVE_MAX_BLOCK || "10000", 10) * 100;
 const RESERVE_DAYS = parseInt(process.env.RESERVE_VALID_DAYS || "90", 10);
 
-// Health - mode hidden behind header + body `mode`; raw `mock` only in /docs & debug (hide mock badge on landing per IA 3.5/5)
 app.get("/health", (req, res) => {
   const mode = getMode();
   res.set("X-Razorpay-Mode", mode);
@@ -28,8 +27,11 @@ app.get("/api/health", (req, res) => {
 });
 app.get("/api/catalog", (req, res) => {
   const { q, price_min, price_max, category } = req.query;
-  const r = listCatalog({ query: q, price_min: price_min ? Number(price_min) : null, price_max: price_max ? Number(price_max) : null, category });
-  res.json({ count: r.length, products: r.map(p => ({ ...p, price_inr: p.price / 100 })) });
+  const limit = parseInt(req.query.limit, 10) || 50;
+  const offset = parseInt(req.query.offset, 10) || 0;
+  const result = listCatalog({ query: q, price_min: price_min ? Number(price_min) : null, price_max: price_max ? Number(price_max) : null, category, limit, offset });
+  const products = result.products.map(p => ({ ...p, price_inr: p.price / 100 }));
+  res.json({ count: result.count, total: result.total, offset: result.offset, limit: result.limit, products });
 });
 app.get("/api/catalog/:id", (req, res) => {
   const p = getProduct(req.params.id);
@@ -37,7 +39,6 @@ app.get("/api/catalog/:id", (req, res) => {
   res.json(p);
 });
 
-// Create Reserve — SBMD 1 block -> N debits
 app.post("/api/reserve/create", (req, res) => {
   const { user_phone = "9999999999", max_block_inr, consent = true } = req.body || {};
   const amountPaise = Math.round((max_block_inr || 10000) * 100);
@@ -61,7 +62,6 @@ app.get("/api/reserve/:id", (req, res) => {
   res.json(r);
 });
 
-// Create agent checkout — bounded + explainable
 app.post("/api/checkout/create", async (req, res) => {
   try {
     const { items, reserve_id, customer = {} } = req.body || {};
@@ -76,12 +76,10 @@ app.post("/api/checkout/create", async (req, res) => {
       if (new Date(reserve.expires_at) < new Date()) return res.status(400).json({ error: "reserve expired — 90d validity" });
       if (total > reserve.remaining) {
         const a = audit("checkout_blocked_exceeds_reserve", { items, total, reserve_id }, { error: "exceeds remaining", reserve }, { bounded_check: `exceeds reserve remaining ${reserve.remaining/100}`, consent: false });
-        // graceful fallback: create payment link instead
         const fallback = await createPaymentLink({ amount: total, currency: "INR", description: `Fallback: ${details.map(d=>d.name).join(", ")}`, customer: { name: customer.name || "Test User", contact: customer.contact || "+919999999999", email: customer.email || "test@razorpay" }, notes: { fallback_reason: "reserve_exceeded", audit_id: a.id } });
         return res.status(400).json({ error: `Bounded check failed: total ${total/100} > reserve remaining ${reserve.remaining/100}`, audit: a, fallback, explainability: "Graceful fallback to Standard Payment Link (not Reserve debit) — bounded, gated, audit trail preserved" });
       }
     }
-    // create Razorpay order (bounded amount = total, tamper-proof via order_id)
     const receipt = `rcpt_${Date.now()}`;
     const order = await createOrder({ amount: total, currency: "INR", receipt, notes: { reserve_id: reserve_id || "", items: JSON.stringify(items) } });
     const localId = nextId("ord");
@@ -107,10 +105,8 @@ app.post("/api/webhook/razorpay", (req, res) => {
   }
   const evt = req.body.event || "payment.captured";
   const a = audit("webhook", req.body, { event: evt, verified: true });
-  // update order if payment.captured
   if (evt.includes("payment")) {
     const payment = req.body.payload?.payment?.entity || req.body;
-    // find order by razorpay_order_id
     for (const o of orders.values()) if (o.razorpay_order_id === payment.order_id) o.status = "paid";
   }
   res.json({ ok: true, audit: a });
@@ -122,20 +118,87 @@ app.get("/api/reserves", (req, res) => res.json({ count: reserves.size, reserves
 app.get("/api/debits", (req, res) => res.json({ count: debits.length, debits }));
 app.post("/api/test/reset", (req, res) => { resetStore(); res.json({ ok: true }); });
 
-// llms.txt agent-readable
-app.get("/llms.txt", (req, res) => {
-  res.type("text/plain").send(`# AgentCart catalog — agent-readable
-# Use GET /api/catalog?q=&price_max=  then POST /api/checkout/create with {items:[{id,qty}], reserve_id}
-# Bounded: max reserve Rs ${RESERVE_MAX/100}, token 90d, every debit gated by remaining + consent
-# Test UPI: success@razorpay / failure@razorpay via Checkout.js
-${listCatalog().map(p=> `- ${p.id}: ${p.name} Rs${p.price/100} stock ${p.stock} category ${p.category}`).join("\n")}
+function sendLlmsTxt(req, res) {
+  const maxReserve = RESERVE_MAX / 100;
+  const catLines = Object.entries(categoriesData).map(([cat, n]) => `  - ${cat}: ${n} items`).join("\n");
+  res.type("text/plain").send(`# AgentCart — AI Agent Commerce API
+# A Razorpay-powered food ordering API designed for autonomous AI agents.
+# Browse products, create reserves, checkout, and receive webhook confirmations.
+
+## Authentication
+No API key required for demo mode. All endpoints are open for testing.
+
+## API Reference
+
+### Catalog
+  GET /api/catalog?limit=50&offset=0&q=&category=&price_min=&price_max=
+    - Paginated product listing. Default limit=50, max=200.
+    - Response: { count, total, offset, limit, products }
+    - Products include price_inr (rupees) alongside price (paise).
+  GET /api/catalog/:id
+    - Single product detail by id (p1..p10).
+
+### Reserves (Bounded Pre-auth)
+  POST /api/reserve/create  { max_block_inr, user_phone, consent: true }
+    - Creates a fund reserve (max block Rs ${maxReserve}).
+    - Response: { reserve: { id, remaining, expires_at }, audit, explainability }
+  GET /api/reserve/:id
+    - Check reserve status and remaining balance.
+
+### Checkout
+  POST /api/checkout/create  { items: [{id, qty}], reserve_id?, customer? }
+    - Creates Razorpay order and debits reserve if linked.
+    - Response: { order, checkout_url, audit, next_step }
+
+### Webhooks
+  POST /api/webhook/razorpay  (Razorpay payload)
+    - Handles payment.captured events. Verifies HMAC signature.
+
+### Debug
+  GET /api/audit          - Recent audit trail (last 50)
+  GET /api/orders         - All orders
+  GET /api/reserves       - All reserves
+  GET /api/debits         - All reserve debits
+  POST /api/test/reset    - Reset all in-memory state
+
+## Featured Products (by stock)
+  p7  Tandoor Roti (per pc)     Rs25   stock 300
+  p10 Cold Coffee Mocktail      Rs80   stock 200
+  p5  Pav Bhaji (Amul)          Rs120  stock 150
+  p3  Veg Biryani               Rs199  stock 120
+  p1  Paneer Butter Masala      Rs280  stock 100
+
+## Categories
+${catLines}
+
+## Pagination
+  The catalog supports limit and offset query params.
+  Example: GET /api/catalog?limit=5&offset=0 (first 5 items)
+           GET /api/catalog?limit=5&offset=5 (next 5 items)
+  Response includes "total" for the full filtered count.
+
+## Checkout Flow
+  1. POST /api/reserve/create with { max_block_inr: <amount>, consent: true }
+  2. POST /api/checkout/create with { items: [{id:"p5",qty:2}], reserve_id: "<rsv_id>" }
+  3. Customer pays via checkout_url (Checkout.js with success@razorpay test)
+  4. Razorpay fires webhook to POST /api/webhook/razorpay
+  5. Order status updates to "paid"
+
+## Test Credentials
+  UPI ID: success@razorpay (succeeds) / failure@razorpay (fails)
+  Phone:  9999999999 (default test)
+  Mode:   mock (no real Razorpay key needed)
+  Max reserve: Rs ${maxReserve}
+  Reserve validity: 90 days
 `);
-});
+}
+app.get("/llms.txt", sendLlmsTxt);
+app.get("/llm.txt", sendLlmsTxt);
+app.get("/.well-known/llms.txt", sendLlmsTxt);
 
 app.get("/", (req, res) => {
   const mode = getMode();
   res.set("X-Razorpay-Mode", mode);
-  // hide mock on product landing — show only via header or ?debug=1 / /docs per IA 7
   const body = { name: "AgentCart API", docs: ["/health","/api/catalog","/llms.txt","/api/reserve/create","/api/checkout/create","/api/webhook/razorpay"] };
   if (req.query.debug === "1") body.mode = mode;
   res.json(body);
