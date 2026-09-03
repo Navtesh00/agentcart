@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 import crypto from "crypto";
 import { listCatalog, getProduct, calcTotal } from "../server/src/catalog.js";
 import { reserves, orders, debits, audits, nextId, audit, resetStore } from "../server/src/store.js";
-import { createOrder, createPaymentLink, getRazorpay } from "../server/src/razorpay.js";
+import { createOrder, createPaymentLink, getRazorpay, getMode } from "../server/src/razorpay.js";
 
 dotenv.config();
 const app = express();
@@ -15,9 +15,17 @@ const PORT = process.env.PORT || 3001;
 const RESERVE_MAX = parseInt(process.env.RESERVE_MAX_BLOCK || "10000", 10) * 100; // paise
 const RESERVE_DAYS = parseInt(process.env.RESERVE_VALID_DAYS || "90", 10);
 
-// Health - support both /health and /api/health for Vercel rewrites
-app.get("/health", (req, res) => res.json({ ok: true, mock: !getRazorpay(), reserve_max_paise: RESERVE_MAX, time: new Date().toISOString() }));
-app.get("/api/health", (req, res) => res.json({ ok: true, mock: !getRazorpay(), reserve_max_paise: RESERVE_MAX, time: new Date().toISOString() }));
+// Health - mode hidden behind header + body `mode`; raw `mock` only in /docs & debug (hide mock badge on landing per IA 3.5/5)
+app.get("/health", (req, res) => {
+  const mode = getMode();
+  res.set("X-Razorpay-Mode", mode);
+  res.json({ ok: true, mode, reserve_max_paise: RESERVE_MAX, time: new Date().toISOString() });
+});
+app.get("/api/health", (req, res) => {
+  const mode = getMode();
+  res.set("X-Razorpay-Mode", mode);
+  res.json({ ok: true, mode, reserve_max_paise: RESERVE_MAX, time: new Date().toISOString() });
+});
 app.get("/api/catalog", (req, res) => {
   const { q, price_min, price_max, category } = req.query;
   const r = listCatalog({ query: q, price_min: price_min ? Number(price_min) : null, price_max: price_max ? Number(price_max) : null, category });
@@ -124,9 +132,16 @@ ${listCatalog().map(p=> `- ${p.id}: ${p.name} Rs${p.price/100} stock ${p.stock} 
 `);
 });
 
-app.get("/", (req, res) => res.json({ name: "AgentCart API", docs: ["/health","/api/catalog","/llms.txt","/api/reserve/create","/api/checkout/create","/api/webhook/razorpay"], mock: !getRazorpay() }));
+app.get("/", (req, res) => {
+  const mode = getMode();
+  res.set("X-Razorpay-Mode", mode);
+  // hide mock on product landing — show only via header or ?debug=1 / /docs per IA 7
+  const body = { name: "AgentCart API", docs: ["/health","/api/catalog","/llms.txt","/api/reserve/create","/api/checkout/create","/api/webhook/razorpay"] };
+  if (req.query.debug === "1") body.mode = mode;
+  res.json(body);
+});
 
 if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g,'/')}` || process.argv[1]?.endsWith('index.js')) {
-  app.listen(PORT, () => console.log(`AgentCart server listening http://localhost:${PORT} mock=${!getRazorpay()}`));
+  app.listen(PORT, () => console.log(`AgentCart server listening http://localhost:${PORT} mode=${getMode()}`));
 }
 export default app;
