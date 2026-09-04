@@ -1,0 +1,24 @@
+node:events:487
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use :::3001
+[90m    at Server.setupListenHandle [as _listen2] (node:net:2009:16)[39m
+[90m    at listenInCluster (node:net:2066:12)[39m
+[90m    at Server.listen (node:net:2171:7)[39m
+    at app.listen (D:\MunderDifflin\agentcart\node_modules\[4mexpress[24m\lib\application.js:635:24)
+    at [90mfile:///D:/MunderDifflin/agentcart/server/[39msrc/index.js:171:7
+[90m    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)[39m
+    at async node:internal/modules/esm/loader:643:26
+[90m    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)[39m
+Emitted 'error' event on Server instance at:
+[90m    at emitErrorNT (node:net:2045:8)[39m
+[90m    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)[39m {
+  code: [32m'EADDRINUSE'[39m,
+  errno: [33m-4091[39m,
+  syscall: [32m'listen'[39m,
+  address: [32m'::'[39m,
+  port: [33m3001[39m
+}
+
+Node.js v24.18.0

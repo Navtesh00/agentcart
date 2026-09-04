@@ -3,12 +3,23 @@
   "private": true,
   "version": "1.0.0",
   "description": "AgentCart — Track 01 AI Growth & Agentic Commerce — Razorpay Buildathon",
-  "workspaces": ["server", "mcp-server", "web"],
+  "workspaces": [
+    "server",
+    "mcp-server",
+    "web"
+  ],
   "scripts": {
     "dev:server": "npm --workspace server run dev",
     "dev:web": "npm --workspace web run dev",
     "dev:mcp": "npm --workspace mcp-server run dev",
     "test": "npm --workspace server run test",
     "build": "npm --workspace server run build && npm --workspace mcp-server run build && npm --workspace web run build"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "clsx": "^2.1.1",
+    "express-rate-limit": "^8.7.0",
+    "sonner": "^2.0.8",
+    "zod": "^4.5.4"
   }
 }

@@ -1,0 +1,69 @@
+npm notice run agentcart-web@1.0.0 dev
+npm notice run vite --port 5173 --host
+[2m12:51:46 pm[22m [31m[1m[vite][22m[39m [31mInternal server error: D:\MunderDifflin\agentcart\web\src\main.jsx: Expected corresponding JSX closing tag for <>. (530:4)
+
+[0m [90m 528 |[31m         [33m<[31m[33mspan[31m[33m>[31m[33mFraunces[31m [33m+[31m [33mInstrument[31m [33mSans[31m · [33m#[31m[35m5[31m[33mB6CF0[31m · hairline [33m--[31mbrass · [33m<[31m[33ma[31m href[33m=[31m[32m"/llms.txt"[31m target[33m=[31m[32m"_blank"[31m className[33m=[31m[32m"mono"[31m style[33m=[31m{{color[33m:[31m[32m'var(--clay)'[31m}}[33m>[31m[33m/[31mllms[33m.[31mtxt[33m<[31m[33m/[31m[33ma[31m[33m>[31m · [33m<[31m[33ma[31m href[33m=[31m[32m"/api/catalog"[31m target[33m=[31m[32m"_blank"[31m className[33m=[31m[32m"mono"[31m style[33m=[31m{{color[33m:[31m[32m'var(--clay)'[31m}}[33m>[31m[33m/[31mapi[33m/[31mcatalog[33m<[31m[33m/[31m[33ma[31m[33m>[31m · [33m<[31m[33ma[31m href[33m=[31m[32m"#docs"[31m className[33m=[31m[32m"mono"[31m style[33m=[31m{{color[33m:[31m[32m'var(--clay)'[31m}}[33m>[31m[33mDocs[31m[33m<[31m[33m/[31m[33ma[31m[33m>[31m · [33m<[31m[33mspan[31m className[33m=[31m[32m"mono"[31m[33m>[31mmcp[33m-[31mserver[33m/[31msrc[33m/[31mindex[33m.[31mjs[33m<[31m[33m/[31m[33mspan[31m[33m>[31m · [33mResearch[31m [36min[31m [33m<[31m[33mspan[31m className[33m=[31m[32m"mono"[31m[33m>[31mresearch[35m/razorpay-official/[31m[33m*[31m[33m<[31m[33m/[31m[33mspan[31m[33m>[31m verified [35m2026[31m[33m-[31m[35m09[31m[33m-[31m[35m02[31m[33m<[31m[33m/[31m[33mspan[31m[33m>[31m
+ [90m 529 |[31m       [33m<[31m[33m/[31m[33mfooter[31m[33m>[31m
+[31m[1m>[22m[31m[90m 530 |[31m     [33m<[31m[33m/[31m[33mmain[31m[33m>[31m
+ [90m     |[31m     [31m[1m^[22m[31m
+ [90m 531 |[31m   [33m<[31m[33m/[31m[33m>[31m[33m;[31m
+ [90m 532 |[31m }
+ [90m 533 |[31m createRoot(document[33m.[31mgetElementById([32m'root'[31m))[33m.[31mrender([33m<[31m[33mApp[31m[33m/[31m[33m>[31m)[33m;[31m[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mD:/MunderDifflin/agentcart/web/src/main.jsx[39m:530:4
+[33m  528|          <span>Fraunces + Instrument Sans · #5B6CF0 · hairline --brass · <a href="/llms.txt" target="_blank" className="mono" style={{color:'var(--clay)'}}>/llms.txt</a> · <a href="/api/catalog" target="_blank" className="mono" style={{color:'var(--clay)'}}>/api/catalog</a> · <a href="#docs" className="mono" style={{color:'var(--clay)'}}>Docs</a> · <span className="mono">mcp-server/src/index.js</span> · Research in <span className="mono">research/razorpay-official/*</span> verified 2026-09-02</span>
+  529|        </footer>
+  530|      </main>
+     |      ^
+  531|    </>;
+  532|  }[39m
+      at constructor (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:369:19)
+      at JSXParserMixin.raise (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:6620:19)
+      at JSXParserMixin.jsxParseElementAt (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:4736:14)
+      at JSXParserMixin.jsxParseElement (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:4765:17)
+      at JSXParserMixin.parseExprAtom (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:4775:19)
+      at JSXParserMixin.parseExprSubscripts (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:11102:23)
+      at JSXParserMixin.parseUpdate (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:11087:21)
+      at JSXParserMixin.parseMaybeUnary (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:11067:23)
+      at JSXParserMixin.parseMaybeUnaryOrPrivate (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10920:61)
+      at JSXParserMixin.parseExprOps (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10925:23)
+      at JSXParserMixin.parseMaybeConditional (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10902:23)
+      at JSXParserMixin.parseMaybeAssign (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10852:21)
+      at D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10821:39
+      at JSXParserMixin.allowInAnd (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:12455:12)
+      at JSXParserMixin.parseMaybeAssignAllowIn (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10821:17)
+      at JSXParserMixin.parseMaybeAssignAllowInOrVoidPattern (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:12522:17)
+      at JSXParserMixin.parseParenAndDistinguishExpression (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:11701:28)
+      at JSXParserMixin.parseExprAtom (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:11357:23)
+      at JSXParserMixin.parseExprAtom (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:4780:20)
+      at JSXParserMixin.parseExprSubscripts (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:11102:23)
+      at JSXParserMixin.parseUpdate (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:11087:21)
+      at JSXParserMixin.parseMaybeUnary (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:11067:23)
+      at JSXParserMixin.parseMaybeUnaryOrPrivate (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10920:61)
+      at JSXParserMixin.parseExprOps (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10925:23)
+      at JSXParserMixin.parseMaybeConditional (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10902:23)
+      at JSXParserMixin.parseMaybeAssign (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10852:21)
+      at JSXParserMixin.parseConditional (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10914:29)
+      at JSXParserMixin.parseMaybeConditional (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10906:17)
+      at JSXParserMixin.parseMaybeAssign (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10852:21)
+      at JSXParserMixin.parseExpressionBase (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10805:23)
+      at D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10801:39
+      at JSXParserMixin.allowInAnd (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:12455:12)
+      at JSXParserMixin.parseExpression (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10801:17)
+      at JSXParserMixin.jsxParseExpressionContainer (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:4648:31)
+      at JSXParserMixin.jsxParseElementAt (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:4727:36)
+      at JSXParserMixin.jsxParseElementAt (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:4714:32)
+      at JSXParserMixin.jsxParseElement (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:4765:17)
+      at JSXParserMixin.parseExprAtom (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:4775:19)
+      at JSXParserMixin.parseExprSubscripts (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:11102:23)
+      at JSXParserMixin.parseUpdate (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:11087:21)
+      at JSXParserMixin.parseMaybeUnary (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:11067:23)
+      at JSXParserMixin.parseMaybeUnaryOrPrivate (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10920:61)
+      at JSXParserMixin.parseExprOps (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10925:23)
+      at JSXParserMixin.parseMaybeConditional (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10902:23)
+      at JSXParserMixin.parseMaybeAssign (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10852:21)
+      at JSXParserMixin.parseExpressionBase (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10805:23)
+      at D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10801:39
+      at JSXParserMixin.allowInAnd (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:12450:16)
+      at JSXParserMixin.parseExpression (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:10801:17)
+      at JSXParserMixin.parseReturnStatement (D:\MunderDifflin\agentcart\node_modules\@babel\parser\lib\index.js:13171:28)

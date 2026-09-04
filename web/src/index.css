@@ -1,0 +1,77 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --noir:    #0A0A0A;
+  --carbon:  #1A1A1A;
+  --gold:    #D4A574;
+  --mint:    #00E5A0;
+  --glass:   #2A2A2A;
+  --muted:   #A3A3A3;
+  --white:   #FFFFFF;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  color: #FFFFFF;
+  background: #0A0A0A;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #1A1A1A; }
+::-webkit-scrollbar-thumb { background: #2A2A2A; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #D4A574; }
+
+/* Glass card utility */
+.glass {
+  background: rgba(26, 26, 26, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(42, 42, 42, 0.8);
+  border-radius: 12px;
+}
+
+.glass-gold {
+  background: rgba(26, 26, 26, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(212, 165, 116, 0.3);
+  border-radius: 12px;
+}
+
+.glass-mint {
+  background: rgba(26, 26, 26, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 229, 160, 0.3);
+  border-radius: 12px;
+}
+
+/* Shimmer on active agent borders */
+@keyframes shimmer {
+  0%   { border-color: rgba(0, 229, 160, 0.3); }
+  50%  { border-color: rgba(0, 229, 160, 0.7); }
+  100% { border-color: rgba(0, 229, 160, 0.3); }
+}
+.shimmer-mint { animation: shimmer 2s ease-in-out infinite; }
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up { animation: fade-in-up 0.4s ease-out forwards; }
+
+@keyframes pulse-gold {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(212, 165, 116, 0.4); }
+  50%      { box-shadow: 0 0 0 8px rgba(212, 165, 116, 0); }
+}
+.animate-pulse-gold { animation: pulse-gold 2s ease-in-out infinite; }

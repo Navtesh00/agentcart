@@ -14,6 +14,9 @@ function hasValidKeys() {
 export function getRazorpay() {
   if (!hasValidKeys()) return null;
   if (!instance) instance = new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
+  // Razorpay SDK uses api.razorpay.com (single endpoint for both test & live).
+  // rzp_test_* keys hit test mode on api.razorpay.com; rzp_live_* keys hit live.
+  // test.razorpay.com is an alias — no separate endpoint needed. No manual config.
   return instance;
 }
 export function getMode() {
