@@ -34,8 +34,8 @@ app.use(cors({ origin: (origin, cb) => { if (!origin || ALLOWED_ORIGINS.includes
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; }, limit: "1mb" }));
 
 // Rate limiting
-const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false, message: { error: "rate_limited" } });
-const writeLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false, message: { error: "rate_limited" } });
+const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false, message: { error: "rate_limited" }, skip: () => process.env.NODE_ENV === "test" });
+const writeLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false, message: { error: "rate_limited" }, skip: () => process.env.NODE_ENV === "test" });
 
 const PORT = process.env.PORT || 3001;
 const RESERVE_MAX = parseInt(process.env.RESERVE_MAX_BLOCK || "10000", 10) * 100;
@@ -175,20 +175,21 @@ app.post("/api/approval/pin", verifyCapability, writeLimiter, async (req, res) =
 // Frontend approve: authenticated via short-lived capability (no agent secret)
 async function verifyCapability(req, res, next) {
   const cap = req.headers["x-capability"] || "";
-  if (!cap) return res.status(401).json({ error: "missing_capability" });
+  if (!cap) return res.status(401).json({ error: "missing_capability", code: "MISSING_CAPABILITY" });
   const meta = capabilityStore.get(cap);
-  if (!meta) return res.status(401).json({ error: "invalid_capability" });
-  if (meta.exp < Date.now()) { capabilityStore.delete(cap); return res.status(401).json({ error: "capability_expired" }); }
+  if (!meta) return res.status(401).json({ error: "invalid_capability", code: "INVALID_CAPABILITY" });
+  if (meta.exp < Date.now()) { capabilityStore.delete(cap); return res.status(401).json({ error: "capability_expired", code: "CAPABILITY_EXPIRED" }); }
   // Bind capability to the reserve being approved
   if (req.body?.reserve_id && meta.reserveId !== req.body.reserve_id) {
-    return res.status(403).json({ error: "capability_reserve_mismatch" });
+    return res.status(403).json({ error: "capability_reserve_mismatch", code: "CAPABILITY_RESERVE_MISMATCH" });
   }
   req.capability = meta;
+  req.capabilityToken = cap;
   // Bind to the owning agent so downstream (logActivity) knows who triggered it
   const reserve = await getReserve(meta.reserveId);
   req.agentKey = reserve?.agent_key || "human";
-  // Consume one-time capability
-  capabilityStore.delete(cap);
+  // Do not consume here: /api/approval/pin and /api/checkout/approve are two
+  // separate browser calls in the PRD's HITL flow. The approve endpoint consumes it.
   next();
 }
 
@@ -263,7 +264,14 @@ app.get("/api/merchants/:id/catalog", apiLimiter, async (req, res) => {
     const offset = parseInt(req.query.offset, 10) || 0;
     const result = await getMerchantCatalog(req.params.id, { query: q, price_min, price_max, category, limit, offset });
     const products = result.products.map((p) => ({ ...p, price_inr: p.price / 100 }));
-    res.json({ ...result, products });
+    res.json({
+      count: result.count,
+      total: result.total,
+      offset: result.offset,
+      limit: result.limit,
+      has_more: result.offset + result.count < result.total,
+      products
+    });
   } catch (e) {
     const status = e.status || 500;
     res.status(status).json({ error: e.message, code: e.code });
@@ -324,6 +332,80 @@ app.get("/api/reserve/:id", apiLimiter, async (req, res) => {
   }
 });
 
+// ── Reserve Cancel ──
+// Cancel a reserve and mark it as revoked. Does not restore stock (external merchant catalogs
+// manage their own inventory). Records the cancellation for audit trail.
+app.post("/api/reserve/:id/cancel", verifyHmac, writeLimiter, async (req, res) => {
+  try {
+    const reserveId = req.params.id;
+    const reserve = await getReserve(reserveId);
+    
+    if (!reserve) {
+      const a = await audit("reserve_cancel_not_found", { reserve_id: reserveId }, { error: "not found" });
+      return res.status(404).json({ error: "reserve not found", code: "RESERVE_NOT_FOUND", audit: a });
+    }
+    
+    // Only the owning agent can cancel
+    if (reserve.agent_key && reserve.agent_key !== req.agentKey) {
+      const a = await audit("reserve_cancel_forbidden", { reserve_id: reserveId, agent_key: req.agentKey }, { error: "not the owning agent" });
+      return res.status(403).json({ error: "not the owning agent", code: "FORBIDDEN", audit: a });
+    }
+    
+    // Check current status
+    if (reserve.status === "cancelled") {
+      const a = await audit("reserve_cancel_already_cancelled", { reserve_id: reserveId }, { status: reserve.status });
+      return res.status(400).json({ error: "reserve already cancelled", code: "ALREADY_CANCELLED", audit: a });
+    }
+    
+    if (reserve.status === "completed") {
+      const a = await audit("reserve_cancel_already_completed", { reserve_id: reserveId }, { status: reserve.status });
+      return res.status(400).json({ error: "reserve already completed", code: "ALREADY_COMPLETED", audit: a });
+    }
+    
+    // Check expiry
+    if (new Date(reserve.expires_at) < new Date()) {
+      const a = await audit("reserve_cancel_expired", { reserve_id: reserveId }, { error: "reserve expired" });
+      return res.status(400).json({ error: "reserve expired", code: "RESERVE_EXPIRED", audit: a });
+    }
+    
+    // Perform cancellation with row-level lock for consistency
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const row = await client.query('SELECT * FROM reserves WHERE id = $1 FOR UPDATE', [reserveId]);
+      const r = row.rows[0];
+      if (!r) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: "reserve not found", code: "RESERVE_NOT_FOUND" });
+      }
+      if (r.status === "cancelled" || r.status === "completed") {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `reserve already ${r.status}`, code: `ALREADY_${r.status.toUpperCase()}` });
+      }
+      await client.query('UPDATE reserves SET status = $1 WHERE id = $2', ['cancelled', reserveId]);
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+    
+    await logActivity(req.agentKey, "reserve_cancel", { id: reserveId, amount: reserve.remaining });
+    const a = await audit("reserve_cancelled", { reserve_id: reserveId }, { remaining: reserve.remaining, status: "cancelled" });
+    
+    res.json({
+      reserve_id: reserveId,
+      status: "cancelled",
+      message: "Reserve cancelled successfully. Remaining funds are no longer available for debits.",
+      audit: a,
+      explainability: `Reserve ${reserveId} cancelled by agent ${req.agentKey}. Remaining Rs ${reserve.remaining / 100} will not be debited.`
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message || "internal error" });
+  }
+});
+
 // ── Checkout ──
 // HITL Flow: reserve/create → approval_token → approve → Razorpay order
 // /api/checkout/create now only prepares cart + validates reserve (no Razorpay hit)
@@ -366,7 +448,9 @@ app.post("/api/checkout/create", verifyHmac, writeLimiter, validate(MerchantChec
 // The agent alone can never satisfy this: it never receives the PIN from reserve/create.
 app.post("/api/checkout/approve", verifyCapability, writeLimiter, validate(ApproveCheckoutSchema), async (req, res) => {
   try {
-    const { reserve_id, human_pin, idempotency_key } = req.validated;
+    const { reserve_id, idempotency_key } = req.validated;
+    // `human_pin` may come from body or as `approval_token` (legacy alias)
+    const human_pin = req.validated.human_pin || req.body.human_pin || req.body.approval_token;
 
     // Idempotency check: return cached response if key already used
     const cached = await checkIdempotency(idempotency_key);
@@ -578,7 +662,7 @@ app.post("/api/agent/login", verifyHmac, writeLimiter, async (req, res) => {
 
 app.get("/api/agent/activities", requireSession, async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 10, 200);
     const activities = await getAgentActivities(req.agentKey, limit);
     res.json({ agent_key: req.agentKey, count: activities.length, activities });
   } catch (e) {
@@ -659,7 +743,7 @@ app.get("/api/debits", requireSession, apiLimiter, async (req, res) => {
 
 app.get("/api/audit", requireSession, apiLimiter, async (req, res) => {
   try {
-    const audits = await getAudit(50);
+    const audits = await getAudit(100);
     res.json({ count: audits.length, audits });
   } catch (e) {
     res.status(500).json({ error: e.message || "internal error" });
