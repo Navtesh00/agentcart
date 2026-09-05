@@ -7,7 +7,7 @@ import CartDrawer from '../components/CartDrawer.jsx';
 import ChatWidget from '../components/ChatWidget.jsx';
 import { useCart } from '../hooks/useCart.jsx';
 
-const CATEGORIES = ['All', 'Paneer', 'Rice', 'Dal', 'Street', 'Thali', 'Rotis', 'Sides', 'Chinese', 'Drinks'];
+const CATEGORIES = ['All', 'Paneer', 'Rice', 'Dal', 'Pavbhaji', 'Thali', 'Rotis', 'Fries', 'Chinese', 'Mocktails'];
 
 export default function Restaurant({ onCheckout }) {
   const [dishes, setDishes] = useState([]);
