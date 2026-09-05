@@ -19,7 +19,7 @@
     "better-sqlite3": "^13.0.3",
     "clsx": "^2.1.1",
     "express-rate-limit": "^8.7.0",
-    "node-cache": "^5.12.0",
+    "node-cache": "^5.1.2",
     "pg": "^8.13.0",
     "sonner": "^2.0.8",
     "zod": "^4.5.4"

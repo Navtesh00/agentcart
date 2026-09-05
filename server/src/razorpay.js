@@ -11,7 +11,13 @@ function hasValidKeys() {
   if (!key_id.startsWith("rzp_")) return false; // rzp_test_ / rzp_live_ per api
   return true;
 }
+
+function isMockMode() {
+  return process.env.RAZORPAY_MOCK === "true";
+}
+
 export function getRazorpay() {
+  if (isMockMode()) return null;
   if (!hasValidKeys()) return null;
   if (!instance) instance = new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
   // Razorpay SDK uses api.razorpay.com (single endpoint for both test & live).
@@ -20,6 +26,7 @@ export function getRazorpay() {
   return instance;
 }
 export function getMode() {
+  if (isMockMode()) return "mock";
   return getRazorpay() ? "test" : "mock";
 }
 export async function createOrder({ amount, currency = "INR", receipt, notes }) {

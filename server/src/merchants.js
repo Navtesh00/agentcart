@@ -198,8 +198,18 @@ export async function calcMerchantTotal(merchantId, items) {
   const details = [];
   for (const { id, qty } of items) {
     const p = await getMerchantProduct(merchantId, id);
-    if (!p) throw new Error(`unknown product ${id}`);
-    if (qty > p.stock) throw new Error(`out of stock ${id}`);
+    if (!p) {
+      const err = new Error(`unknown product ${id}`);
+      err.status = 404;
+      err.code = 'PRODUCT_NOT_FOUND';
+      throw err;
+    }
+    if (qty > p.stock) {
+      const err = new Error(`out of stock ${id}`);
+      err.status = 400;
+      err.code = 'OUT_OF_STOCK';
+      throw err;
+    }
     const line = p.price * qty;
     total += line;
     details.push({ ...p, qty, line });

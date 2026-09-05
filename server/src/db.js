@@ -273,6 +273,19 @@ export async function getAgentDashboard(agentKey) {
   };
 }
 
+export async function getSessionSummary(agentKey) {
+  const reserves = await pool.query('SELECT max_block, remaining FROM reserves WHERE agent_key = $1', [agentKey]);
+  const totalBudgetCents = reserves.rows.reduce((sum, r) => sum + parseInt(r.max_block || 0, 10), 0);
+  const remainingCents = reserves.rows.reduce((sum, r) => sum + parseInt(r.remaining || 0, 10), 0);
+  const spentCents = totalBudgetCents - remainingCents;
+  return {
+    total_budget_cents: totalBudgetCents,
+    spent_cents: spentCents,
+    remaining_cents: remainingCents,
+    reserve_count: reserves.rows.length
+  };
+}
+
 // Idempotency
 export async function checkIdempotency(key) {
   const r = await pool.query('SELECT response FROM idempotency_keys WHERE key = $1', [key]);
@@ -305,7 +318,7 @@ export async function getActiveSession(agentKey) {
 
 // Reset
 export async function resetAll() {
-  await pool.query('DELETE FROM orders; DELETE FROM reserves; DELETE FROM debits; DELETE FROM audit; DELETE FROM activities; DELETE FROM sessions; DELETE FROM hosted_products; DELETE FROM merchants;');
+  await pool.query('DELETE FROM orders; DELETE FROM reserves; DELETE FROM debits; DELETE FROM audit; DELETE FROM activities; DELETE FROM hosted_products; DELETE FROM merchants;');
   seq = Date.now();
 }
 

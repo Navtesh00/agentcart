@@ -31,9 +31,15 @@ export const AgentLoginSchema = z.object({
 
 export const ApproveCheckoutSchema = z.object({
   reserve_id: z.string().min(1, 'reserve_id required'),
-  approval_token: z.string().min(1, 'approval_token required'),
+  // Human-entered one-time PIN. `approval_token` is accepted as a legacy alias
+  // so older clients following the original PRD wording still work.
+  human_pin: z.string().regex(/^\d{6}$/, '6-digit human_pin required').optional(),
+  approval_token: z.string().optional(),
   idempotency_key: z.string().min(1, 'idempotency_key required'),
-});
+}).refine(
+  (v) => !!v.human_pin || !!v.approval_token,
+  { message: 'human_pin or approval_token required', path: ['human_pin'] }
+).transform((v) => ({ ...v, human_pin: v.human_pin || v.approval_token }));
 
 export const MerchantSchema = z.object({
   name: z.string().min(1, 'merchant name required').max(200),
@@ -70,7 +76,7 @@ export function validate(schema) {
   return (req, res, next) => {
     const result = schema.safeParse(req.body);
     if (!result.success) {
-      return res.status(400).json({ error: 'validation_failed', details: result.error.issues });
+      return res.status(400).json({ error: 'validation_failed', code: 'VALIDATION_FAILED', details: result.error.issues });
     }
     req.validated = result.data;
     next();

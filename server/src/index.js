@@ -18,7 +18,8 @@ import pool, {
   logActivity, getAgentActivities, getAgentDashboard,
   createSession, getSession, getActiveSession,
   checkIdempotency, storeIdempotency,
-  resetAll, nextId
+  resetAll, nextId,
+  getSessionSummary
 } from "./db.js";
 import {
   CheckoutSchema, ReserveSchema, ApproveCheckoutSchema, ActivityLogSchema, validate,
@@ -40,6 +41,11 @@ const writeLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, standardHead
 const PORT = process.env.PORT || 3001;
 const RESERVE_MAX = parseInt(process.env.RESERVE_MAX_BLOCK || "10000", 10) * 100;
 const RESERVE_DAYS = parseInt(process.env.RESERVE_VALID_DAYS || "90", 10);
+
+// Standardized error response helper (PRD-compliant: { error, code })
+function err(res, status, message, code) {
+  return res.status(status).json({ error: message, code });
+}
 
 // ── HMAC Agent Auth ──
 // Parse AGENT_SECRETS from .env: "agent1:secret1,agent2:secret2"
@@ -66,29 +72,29 @@ async function verifyHmac(req, res, next) {
 
     if (!agentId || !nonce || !timestamp || !signature) {
       await audit("auth_unknown_agent", { agentId, path: req.path }, { error: "missing_auth_headers", required: ["x-agent-id", "x-nonce", "x-timestamp", "x-signature"] });
-      return res.status(401).json({ error: "missing_auth_headers", required: ["x-agent-id", "x-nonce", "x-timestamp", "x-signature"] });
+      return err(res, 401, "Missing authentication headers", "MISSING_AUTH_HEADERS");
     }
 
     const secret = AGENT_SECRETS.get(agentId);
     if (!secret) {
       await audit("auth_unknown_agent", { agentId, path: req.path }, { error: "unknown agent" });
-      return res.status(401).json({ error: "unknown_agent" });
+      return err(res, 401, "Unknown agent", "UNKNOWN_AGENT");
     }
 
     const tsRaw = parseInt(timestamp, 10);
     if (isNaN(tsRaw)) {
       await audit("auth_timestamp_invalid", { agentId, timestamp, path: req.path });
-      return res.status(401).json({ error: "timestamp_invalid" });
+      return err(res, 401, "Invalid timestamp", "TIMESTAMP_INVALID");
     }
     const ts = tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
     if (Math.abs(Date.now() - ts) > HMAC_TIMESTAMP_TOLERANCE_MS) {
       await audit("auth_timestamp_expired", { agentId, timestamp, path: req.path });
-      return res.status(401).json({ error: "timestamp_expired", tolerance_ms: HMAC_TIMESTAMP_TOLERANCE_MS });
+      return err(res, 401, "Timestamp expired", "TIMESTAMP_EXPIRED");
     }
 
     if (usedNonces.has(nonce)) {
       await audit("auth_nonce_reuse", { agentId, nonce, path: req.path });
-      return res.status(401).json({ error: "nonce_reused" });
+      return err(res, 401, "Nonce already used", "NONCE_REUSED");
     }
 
     const body = req.rawBody ? req.rawBody.toString("utf8") : JSON.stringify(req.body || {});
@@ -99,7 +105,7 @@ async function verifyHmac(req, res, next) {
     const providedBuffer = Buffer.from(signature, "hex");
     if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) {
       await audit("auth_signature_invalid", { agentId, path: req.path }, { error: "HMAC mismatch" });
-      return res.status(401).json({ error: "invalid_signature" });
+      return err(res, 401, "Invalid HMAC signature", "INVALID_SIGNATURE");
     }
 
     usedNonces.set(nonce, Date.now());
@@ -114,10 +120,10 @@ async function requireSession(req, res, next) {
   try {
     const auth = req.headers.authorization || "";
     const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-    if (!token) return res.status(401).json({ error: "no_token" });
+    if (!token) return err(res, 401, "No token provided", "NO_TOKEN");
     const session = await getSession(token);
-    if (!session) return res.status(401).json({ error: "invalid_token" });
-    if (new Date(session.expires_at) < new Date()) return res.status(401).json({ error: "token_expired" });
+    if (!session) return err(res, 401, "Invalid token", "INVALID_TOKEN");
+    if (new Date(session.expires_at) < new Date()) return err(res, 401, "Token expired", "TOKEN_EXPIRED");
     req.agentKey = session.agent_key;
     next();
   } catch (e) {
@@ -138,19 +144,19 @@ setInterval(() => {
 app.post("/api/approval/request-token", verifyHmac, writeLimiter, async (req, res) => {
   try {
     const reserveId = req.body?.reserve_id;
-    if (!reserveId) return res.status(400).json({ error: "reserve_id required" });
+    if (!reserveId) return err(res, 400, "reserve_id required", "RESERVE_ID_REQUIRED");
     const reserve = await getReserve(reserveId);
-    if (!reserve) return res.status(404).json({ error: "reserve not found" });
+    if (!reserve) return err(res, 404, "Reserve not found", "RESERVE_NOT_FOUND");
     if (reserve.agent_key && reserve.agent_key !== req.agentKey) {
       await audit("approval_capability_forbidden", { reserveId, agentKey: req.agentKey }, { error: "not the owning agent" });
-      return res.status(403).json({ error: "not_the_owning_agent" });
+      return err(res, 403, "Not the owning agent", "FORBIDDEN");
     }
     const capability = crypto.randomBytes(24).toString("hex");
     capabilityStore.set(capability, { reserveId, exp: Date.now() + CAPABILITY_TTL_MS });
     await audit("approval_capability_issued", { reserveId }, { ttl_ms: CAPABILITY_TTL_MS });
     res.json({ capability, expires_at: new Date(Date.now() + CAPABILITY_TTL_MS).toISOString() });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -161,27 +167,27 @@ app.post("/api/approval/request-token", verifyHmac, writeLimiter, async (req, re
 app.post("/api/approval/pin", verifyCapability, writeLimiter, async (req, res) => {
   try {
     const reserveId = req.capability?.reserveId || req.body?.reserve_id;
-    if (!reserveId) return res.status(400).json({ error: "reserve_id required" });
+    if (!reserveId) return err(res, 400, "reserve_id required", "RESERVE_ID_REQUIRED");
     const reserve = await getReserve(reserveId);
-    if (!reserve) return res.status(404).json({ error: "reserve not found" });
-    if (!reserve.human_pin) return res.status(400).json({ error: "no human pin for reserve" });
+    if (!reserve) return err(res, 404, "Reserve not found", "RESERVE_NOT_FOUND");
+    if (!reserve.human_pin) return err(res, 400, "No human PIN for reserve", "NO_HUMAN_PIN");
     await audit("approval_pin_delivered", { reserveId }, {}, { consent: true });
     res.json({ reserve_id: reserveId, human_pin: reserve.human_pin, pin_required: true });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
 // Frontend approve: authenticated via short-lived capability (no agent secret)
 async function verifyCapability(req, res, next) {
   const cap = req.headers["x-capability"] || "";
-  if (!cap) return res.status(401).json({ error: "missing_capability", code: "MISSING_CAPABILITY" });
+  if (!cap) return err(res, 401, "Missing capability", "MISSING_CAPABILITY");
   const meta = capabilityStore.get(cap);
-  if (!meta) return res.status(401).json({ error: "invalid_capability", code: "INVALID_CAPABILITY" });
-  if (meta.exp < Date.now()) { capabilityStore.delete(cap); return res.status(401).json({ error: "capability_expired", code: "CAPABILITY_EXPIRED" }); }
+  if (!meta) return err(res, 401, "Invalid capability", "INVALID_CAPABILITY");
+  if (meta.exp < Date.now()) { capabilityStore.delete(cap); return err(res, 401, "Capability expired", "CAPABILITY_EXPIRED"); }
   // Bind capability to the reserve being approved
   if (req.body?.reserve_id && meta.reserveId !== req.body.reserve_id) {
-    return res.status(403).json({ error: "capability_reserve_mismatch", code: "CAPABILITY_RESERVE_MISMATCH" });
+    return err(res, 403, "Capability reserve mismatch", "CAPABILITY_RESERVE_MISMATCH");
   }
   req.capability = meta;
   req.capabilityToken = cap;
@@ -217,7 +223,7 @@ app.get("/api/catalog", apiLimiter, (req, res) => {
 
 app.get("/api/catalog/:id", apiLimiter, (req, res) => {
   const p = getProduct(req.params.id);
-  if (!p) return res.status(404).json({ error: "not found" });
+  if (!p) return err(res, 404, "Product not found", "PRODUCT_NOT_FOUND");
   res.json({ ...p, price_inr: p.price / 100 });
 });
 
@@ -229,7 +235,7 @@ app.post("/api/merchants", verifyHmac, writeLimiter, validate(MerchantSchema), a
     await audit("merchant_create", req.validated, m);
     res.json({ merchant: m });
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    return err(res, 400, e.message, "MERCHANT_CREATE_FAILED");
   }
 });
 
@@ -240,7 +246,7 @@ app.get("/api/merchants", apiLimiter, async (req, res) => {
 
 app.get("/api/merchants/:id", apiLimiter, async (req, res) => {
   const m = await getMerchant(req.params.id);
-  if (!m) return res.status(404).json({ error: "merchant not found" });
+  if (!m) return err(res, 404, "Merchant not found", "MERCHANT_NOT_FOUND");
   res.json({ merchant: m });
 });
 
@@ -252,7 +258,7 @@ app.post("/api/merchants/:id/products", verifyHmac, writeLimiter, validate(Hoste
     res.json({ product: { ...p, price_inr: p.price / 100 } });
   } catch (e) {
     const status = e.status || 400;
-    res.status(status).json({ error: e.message, code: e.code });
+    return err(res, status, e.message, e.code || "HOSTED_PRODUCT_ERROR");
   }
 });
 
@@ -274,18 +280,18 @@ app.get("/api/merchants/:id/catalog", apiLimiter, async (req, res) => {
     });
   } catch (e) {
     const status = e.status || 500;
-    res.status(status).json({ error: e.message, code: e.code });
+    return err(res, status, e.message, e.code || "EXTERNAL_CATALOG_ERROR");
   }
 });
 
 app.get("/api/merchants/:id/catalog/:productId", apiLimiter, async (req, res) => {
   try {
     const p = await getMerchantProduct(req.params.id, req.params.productId);
-    if (!p) return res.status(404).json({ error: "not found" });
+    if (!p) return err(res, 404, "Product not found", "PRODUCT_NOT_FOUND");
     res.json({ ...p, price_inr: p.price / 100 });
   } catch (e) {
     const status = e.status || 500;
-    res.status(status).json({ error: e.message, code: e.code });
+    return err(res, status, e.message, e.code || "EXTERNAL_CATALOG_ERROR");
   }
 });
 
@@ -296,7 +302,7 @@ app.post("/api/reserve/create", verifyHmac, writeLimiter, validate(ReserveSchema
     const amountPaise = Math.round((max_block_inr || 10000) * 100);
     if (amountPaise > RESERVE_MAX) {
       const a = await audit("reserve_create_blocked", { max_block_inr }, { error: `exceeds max ${RESERVE_MAX / 100}` }, { bounded_check: `max ${RESERVE_MAX / 100} INR`, consent: false });
-      return res.status(400).json({ error: `Bounded check failed: max block is Rs ${RESERVE_MAX / 100}`, audit: a });
+      return err(res, 400, `Bounded check failed: max block is Rs ${RESERVE_MAX / 100}`, "BUDGET_EXCEEDED");
     }
     const id = nextId("rsv");
     const now = new Date().toISOString();
@@ -317,18 +323,18 @@ app.post("/api/reserve/create", verifyHmac, writeLimiter, validate(ReserveSchema
       explainability: `Funds blocked Rs ${amountPaise / 100}, debits allowed until ${expires_at} within limit, revocable in UPI app. Awaiting HUMAN approval — the calling agent cannot approve this itself.`
     });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
 app.get("/api/reserve/:id", apiLimiter, async (req, res) => {
   try {
     const r = await getReserve(req.params.id);
-    if (!r) return res.status(404).json({ error: "reserve not found" });
+    if (!r) return err(res, 404, "Reserve not found", "RESERVE_NOT_FOUND");
     const { approval_token, ...safe } = r;
     res.json(safe);
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -342,30 +348,30 @@ app.post("/api/reserve/:id/cancel", verifyHmac, writeLimiter, async (req, res) =
     
     if (!reserve) {
       const a = await audit("reserve_cancel_not_found", { reserve_id: reserveId }, { error: "not found" });
-      return res.status(404).json({ error: "reserve not found", code: "RESERVE_NOT_FOUND", audit: a });
+      return err(res, 404, "Reserve not found", "RESERVE_NOT_FOUND");
     }
     
     // Only the owning agent can cancel
     if (reserve.agent_key && reserve.agent_key !== req.agentKey) {
       const a = await audit("reserve_cancel_forbidden", { reserve_id: reserveId, agent_key: req.agentKey }, { error: "not the owning agent" });
-      return res.status(403).json({ error: "not the owning agent", code: "FORBIDDEN", audit: a });
+      return err(res, 403, "Not the owning agent", "FORBIDDEN");
     }
     
     // Check current status
     if (reserve.status === "cancelled") {
       const a = await audit("reserve_cancel_already_cancelled", { reserve_id: reserveId }, { status: reserve.status });
-      return res.status(400).json({ error: "reserve already cancelled", code: "ALREADY_CANCELLED", audit: a });
+      return err(res, 400, "Reserve already cancelled", "ALREADY_CANCELLED");
     }
     
     if (reserve.status === "completed") {
       const a = await audit("reserve_cancel_already_completed", { reserve_id: reserveId }, { status: reserve.status });
-      return res.status(400).json({ error: "reserve already completed", code: "ALREADY_COMPLETED", audit: a });
+      return err(res, 400, "Reserve already completed", "ALREADY_COMPLETED");
     }
     
     // Check expiry
     if (new Date(reserve.expires_at) < new Date()) {
       const a = await audit("reserve_cancel_expired", { reserve_id: reserveId }, { error: "reserve expired" });
-      return res.status(400).json({ error: "reserve expired", code: "RESERVE_EXPIRED", audit: a });
+      return err(res, 400, "Reserve expired", "RESERVE_EXPIRED");
     }
     
     // Perform cancellation with row-level lock for consistency
@@ -376,11 +382,11 @@ app.post("/api/reserve/:id/cancel", verifyHmac, writeLimiter, async (req, res) =
       const r = row.rows[0];
       if (!r) {
         await client.query('ROLLBACK');
-        return res.status(404).json({ error: "reserve not found", code: "RESERVE_NOT_FOUND" });
+        return err(res, 404, "Reserve not found", "RESERVE_NOT_FOUND");
       }
       if (r.status === "cancelled" || r.status === "completed") {
         await client.query('ROLLBACK');
-        return res.status(400).json({ error: `reserve already ${r.status}`, code: `ALREADY_${r.status.toUpperCase()}` });
+        return err(res, 400, `Reserve already ${r.status}`, `ALREADY_${r.status.toUpperCase()}`);
       }
       await client.query('UPDATE reserves SET status = $1 WHERE id = $2', ['cancelled', reserveId]);
       await client.query('COMMIT');
@@ -402,7 +408,7 @@ app.post("/api/reserve/:id/cancel", verifyHmac, writeLimiter, async (req, res) =
       explainability: `Reserve ${reserveId} cancelled by agent ${req.agentKey}. Remaining Rs ${reserve.remaining / 100} will not be debited.`
     });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -422,11 +428,11 @@ app.post("/api/checkout/create", verifyHmac, writeLimiter, validate(MerchantChec
     let reserve = null;
     if (reserve_id) {
       reserve = await getReserve(reserve_id);
-      if (!reserve) return res.status(404).json({ error: "reserve not found" });
-      if (new Date(reserve.expires_at) < new Date()) return res.status(400).json({ error: "reserve expired — 90d validity" });
+      if (!reserve) return err(res, 404, "Reserve not found", "RESERVE_NOT_FOUND");
+      if (new Date(reserve.expires_at) < new Date()) return err(res, 400, "Reserve expired — 90d validity", "RESERVE_EXPIRED");
       if (total > reserve.remaining) {
         const a = await audit("checkout_blocked_exceeds_reserve", { items, total, reserve_id }, { error: "exceeds remaining" }, { bounded_check: `exceeds reserve remaining ${reserve.remaining / 100}`, consent: false });
-        return res.status(400).json({ error: `Bounded check failed: total ${total / 100} > reserve remaining ${reserve.remaining / 100}`, audit: a, explainability: "Cart exceeds reserve. Use a smaller cart or create a new reserve." });
+        return err(res, 400, `Bounded check failed: total ${total / 100} > reserve remaining ${reserve.remaining / 100}`, "BUDGET_EXCEEDED");
       }
       // Store items in reserve for approval flow
       await updateReserve(reserve.id, { items: JSON.stringify(details) });
@@ -438,7 +444,7 @@ app.post("/api/checkout/create", verifyHmac, writeLimiter, validate(MerchantChec
     const a = await audit("checkout_prepare", { items, reserve_id }, record, { bounded_check, consent });
     res.json({ order: record, audit: a, message: "Cart prepared. Awaiting human approval to execute payment via /api/checkout/approve.", next_step: "User clicks Approve → POST /api/checkout/approve with reserve_id, approval_token, idempotency_key" });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    return err(res, 500, e.message, "INTERNAL_ERROR");
   }
 });
 
@@ -461,39 +467,39 @@ app.post("/api/checkout/approve", verifyCapability, writeLimiter, validate(Appro
 
     // Validate reserve exists
     const reserve = await getReserve(reserve_id);
-    if (!reserve) return res.status(404).json({ error: "reserve not found" });
+    if (!reserve) return err(res, 404, "Reserve not found", "RESERVE_NOT_FOUND");
     if (reserve.status === "approved" || reserve.status === "completed") {
-      return res.status(400).json({ error: "reserve already approved/completed" });
+      return err(res, 400, "Reserve already approved/completed", "RESERVE_ALREADY_APPROVED");
     }
     if (reserve.status === "cancelled") {
-      return res.status(400).json({ error: "reserve was cancelled" });
+      return err(res, 400, "Reserve was cancelled", "RESERVE_CANCELLED");
     }
     if (new Date(reserve.expires_at) < new Date()) {
-      return res.status(400).json({ error: "reserve expired — 90d validity" });
+      return err(res, 400, "Reserve expired — 90d validity", "RESERVE_EXPIRED");
     }
 
     // Validate the human-held PIN (HITL guardrail): timing-safe compare against the
     // stored salted hash, and consume it after first use.
     if (reserve.human_pin_used) {
       await audit("checkout_approve_pin_already_used", { reserve_id });
-      return res.status(403).json({ error: "approval PIN already used" });
+      return err(res, 403, "Approval PIN already used", "PIN_ALREADY_USED");
     }
     if (!reserve.human_pin_hash) {
       await audit("checkout_approve_no_pin", { reserve_id });
-      return res.status(403).json({ error: "no approval PIN — human approval not verified" });
+      return err(res, 403, "No approval PIN — human approval not verified", "NO_PIN");
     }
     const expected = crypto.createHash("sha256").update("agentcart-pin:" + human_pin + ":" + reserve.id).digest("hex");
     const provided = reserve.human_pin_hash;
     const ok = expected.length === provided.length && crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(provided, "hex"));
     if (!ok) {
       await audit("checkout_approve_pin_mismatch", { reserve_id }, { error: "invalid human PIN" });
-      return res.status(403).json({ error: "invalid approval PIN — human approval not verified" });
+      return err(res, 403, "Invalid approval PIN — human approval not verified", "INVALID_PIN");
     }
 
     // Parse stored items from reserve (set during checkout/create)
     const storedItems = reserve.items ? JSON.parse(reserve.items) : [];
     if (!storedItems.length) {
-      return res.status(400).json({ error: "no items stored in reserve — call /api/checkout/create first" });
+      return err(res, 400, "No items stored in reserve — call /api/checkout/create first", "NO_ITEMS_IN_RESERVE");
     }
 
     const total = storedItems.reduce((sum, item) => sum + (item.line || item.price * item.qty), 0);
@@ -501,7 +507,7 @@ app.post("/api/checkout/approve", verifyCapability, writeLimiter, validate(Appro
     // Bounded check: total must not exceed reserve remaining
     if (total > reserve.remaining) {
       const a = await audit("checkout_approve_blocked", { reserve_id, total }, { error: "exceeds remaining" }, { bounded_check: `exceeds reserve remaining ${reserve.remaining / 100}`, consent: false });
-      return res.status(400).json({ error: `Bounded check failed: total ${total / 100} > reserve remaining ${reserve.remaining / 100}`, audit: a });
+      return err(res, 400, `Bounded check failed: total ${total / 100} > reserve remaining ${reserve.remaining / 100}`, "BUDGET_EXCEEDED");
     }
 
     // Create actual Razorpay Order (before transaction, so a failure touches nothing)
@@ -514,17 +520,17 @@ app.post("/api/checkout/approve", verifyCapability, writeLimiter, validate(Appro
       await client.query('BEGIN');
       const reserveRow = await client.query('SELECT * FROM reserves WHERE id = $1 FOR UPDATE', [reserve_id]);
       const reserve = reserveRow.rows[0] || null;
-      if (!reserve) { await client.query('ROLLBACK'); return res.status(404).json({ error: "reserve not found" }); }
-      if (reserve.status === "approved" || reserve.status === "completed") { await client.query('ROLLBACK'); return res.status(400).json({ error: "reserve already approved/completed" }); }
-      if (reserve.status === "cancelled") { await client.query('ROLLBACK'); return res.status(400).json({ error: "reserve was cancelled" }); }
-      if (new Date(reserve.expires_at) < new Date()) { await client.query('ROLLBACK'); return res.status(400).json({ error: "reserve expired — 90d validity" }); }
-      if (reserve.human_pin_used) { await client.query('ROLLBACK'); return res.status(403).json({ error: "approval PIN already used" }); }
-      if (!reserve.human_pin_hash) { await client.query('ROLLBACK'); return res.status(403).json({ error: "no approval PIN — human approval not verified" }); }
+      if (!reserve) { await client.query('ROLLBACK'); return err(res, 404, "Reserve not found", "RESERVE_NOT_FOUND"); }
+      if (reserve.status === "approved" || reserve.status === "completed") { await client.query('ROLLBACK'); return err(res, 400, "Reserve already approved/completed", "RESERVE_ALREADY_APPROVED"); }
+      if (reserve.status === "cancelled") { await client.query('ROLLBACK'); return err(res, 400, "Reserve was cancelled", "RESERVE_CANCELLED"); }
+      if (new Date(reserve.expires_at) < new Date()) { await client.query('ROLLBACK'); return err(res, 400, "Reserve expired — 90d validity", "RESERVE_EXPIRED"); }
+      if (reserve.human_pin_used) { await client.query('ROLLBACK'); return err(res, 403, "Approval PIN already used", "PIN_ALREADY_USED"); }
+      if (!reserve.human_pin_hash) { await client.query('ROLLBACK'); return err(res, 403, "No approval PIN — human approval not verified", "NO_PIN"); }
       const expected = crypto.createHash("sha256").update("agentcart-pin:" + human_pin + ":" + reserve.id).digest("hex");
       const provided = reserve.human_pin_hash;
       const ok = expected.length === provided.length && crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(provided, "hex"));
-      if (!ok) { await client.query('ROLLBACK'); return res.status(403).json({ error: "invalid approval PIN — human approval not verified" }); }
-      if (total > reserve.remaining) { await client.query('ROLLBACK'); return res.status(400).json({ error: `Bounded check failed: total ${total / 100} > reserve remaining ${reserve.remaining / 100}` }); }
+      if (!ok) { await client.query('ROLLBACK'); return err(res, 403, "Invalid approval PIN — human approval not verified", "INVALID_PIN"); }
+      if (total > reserve.remaining) { await client.query('ROLLBACK'); return err(res, 400, `Bounded check failed: total ${total / 100} > reserve remaining ${reserve.remaining / 100}`, "BUDGET_EXCEEDED"); }
       await client.query('UPDATE reserves SET remaining = remaining - $1, status = $2, human_pin_used = 1 WHERE id = $3', [total, 'approved', reserve_id]);
       const localId = nextId("ord");
       const record = {
@@ -555,7 +561,7 @@ app.post("/api/checkout/approve", verifyCapability, writeLimiter, validate(Appro
       client.release();
     }
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -563,21 +569,21 @@ app.post("/api/checkout/approve", verifyCapability, writeLimiter, validate(Appro
 // Requires proof-of-work gate: client computes nonce where sha256(body+nonce) starts with 4 hex zeros (~65k tries).
 // This adds a small client cost to prevent automated/scripted abuse without annoying real humans.
 // Stricter per-IP rate limit on top.
-const publicWriteLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { error: "rate_limited" } });
+const publicWriteLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { error: "rate_limited", code: "RATE_LIMITED" } });
 const POW_DIFFICULTY = "0000";
 
 app.post("/api/orders/create", publicWriteLimiter, async (req, res) => {
   try {
     const { items, customer = {}, pow } = req.body || {};
-    if (!items || !Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "items [{id, qty}] required" });
+    if (!items || !Array.isArray(items) || items.length === 0) return err(res, 400, "Items required: [{id, qty}]", "VALIDATION_FAILED");
     if (!pow || typeof pow !== "string" || pow.length > 64) {
-      return res.status(422).json({ error: "pow_required", hint: "Compute nonce where sha256(JSON.stringify(body)+nonce) starts with '0000'" });
+      return err(res, 422, "Proof of work required", "POW_REQUIRED");
     }
     const bodyForPow = JSON.stringify({ items, customer });
     const hash = crypto.createHash("sha256").update(bodyForPow + pow).digest("hex");
     if (!hash.startsWith(POW_DIFFICULTY)) {
       await audit("public_checkout_pow_invalid", { items }, { hash });
-      return res.status(422).json({ error: "pow_invalid" });
+      return err(res, 422, "Invalid proof of work", "POW_INVALID");
     }
     const { total, details } = calcTotal(items);
     const receipt = `rcpt_${Date.now()}`;
@@ -588,7 +594,7 @@ app.post("/api/orders/create", publicWriteLimiter, async (req, res) => {
     await audit("public_checkout_create", { items }, record);
     res.json({ order: record });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -599,7 +605,7 @@ app.post("/api/webhook", writeLimiter, async (req, res) => {
     const secret = process.env.RAZORPAY_WEBHOOK_SECRET || "";
     if (!sig) {
       await audit("webhook_no_signature", {}, { error: "missing x-razorpay-signature" });
-      return res.status(401).json({ error: "missing_signature" });
+      return err(res, 401, "Missing signature", "MISSING_SIGNATURE");
     }
     const rawBody = req.rawBody ? req.rawBody.toString("utf8") : JSON.stringify(req.body);
     const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
@@ -607,7 +613,7 @@ app.post("/api/webhook", writeLimiter, async (req, res) => {
     const providedBuffer = Buffer.from(sig, "hex");
     if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) {
       await audit("webhook_signature_invalid", { sig }, { error: "HMAC mismatch" });
-      return res.status(400).json({ error: "invalid_signature" });
+      return err(res, 400, "Invalid signature", "WEBHOOK_SIGNATURE_INVALID");
     }
     const evt = req.body.event || "unknown";
     const payment = req.body.payload?.payment?.entity || {};
@@ -616,7 +622,7 @@ app.post("/api/webhook", writeLimiter, async (req, res) => {
     const KNOWN_EVENTS = ["payment.captured", "payment.failed", "payment.authorized"];
     if (!KNOWN_EVENTS.includes(evt)) {
       await audit("webhook_rejected_unknown_event", { event: evt }, { error: "unknown event type" });
-      return res.status(400).json({ error: "unknown_event", event: evt });
+      return err(res, 400, "Unknown event", "UNKNOWN_EVENT");
     }
 
     if (matchedOrder && evt === "payment.captured") {
@@ -637,7 +643,7 @@ app.post("/api/webhook", writeLimiter, async (req, res) => {
     }
     res.json({ ok: true, event: evt });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -656,7 +662,7 @@ app.post("/api/agent/login", verifyHmac, writeLimiter, async (req, res) => {
     await logActivity(req.agentKey, "agent_login", { session_id: session.id, reused });
     res.json({ token: session.id, expires_at: session.expires_at, agent_key: req.agentKey, reused });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -666,7 +672,7 @@ app.get("/api/agent/activities", requireSession, async (req, res) => {
     const activities = await getAgentActivities(req.agentKey, limit);
     res.json({ agent_key: req.agentKey, count: activities.length, activities });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -676,7 +682,7 @@ app.post("/api/agent/log", requireSession, validate(ActivityLogSchema), async (r
     const entry = await logActivity(req.agentKey, type, data, status);
     res.json({ ok: true, activity: entry });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -685,7 +691,17 @@ app.get("/api/agent/dashboard", requireSession, async (req, res) => {
     const dashboard = await getAgentDashboard(req.agentKey);
     res.json(dashboard);
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
+  }
+});
+
+// Session budget summary (PRD-aligned: total_budget_cents on session level)
+app.get("/api/session/summary", requireSession, apiLimiter, async (req, res) => {
+  try {
+    const summary = await getSessionSummary(req.agentKey);
+    res.json(summary);
+  } catch (e) {
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -694,10 +710,10 @@ app.get("/api/agent/dashboard", requireSession, async (req, res) => {
 app.get("/api/orders/:id", apiLimiter, async (req, res) => {
   try {
     const o = await getOrder(req.params.id);
-    if (!o) return res.status(404).json({ error: "order not found" });
+    if (!o) return err(res, 404, "Order not found", "ORDER_NOT_FOUND");
     res.json(o);
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -719,7 +735,7 @@ app.get("/api/orders", requireSession, apiLimiter, async (req, res) => {
     const orders = await getAllOrders();
     res.json({ count: orders.length, orders: orders.map(redactOrder) });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -728,7 +744,7 @@ app.get("/api/reserves", requireSession, apiLimiter, async (req, res) => {
     const reserves = await getAllReserves();
     res.json({ count: reserves.length, reserves: reserves.map(redactReserve) });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -737,7 +753,7 @@ app.get("/api/debits", requireSession, apiLimiter, async (req, res) => {
     const debits = await getAllDebits();
     res.json({ count: debits.length, debits });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -746,7 +762,7 @@ app.get("/api/audit", requireSession, apiLimiter, async (req, res) => {
     const audits = await getAudit(100);
     res.json({ count: audits.length, audits });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
@@ -755,7 +771,7 @@ app.post("/api/test/reset", requireSession, writeLimiter, async (req, res) => {
     await resetAll();
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message || "internal error" });
+    return err(res, 500, e.message || "Internal error", "INTERNAL_ERROR");
   }
 });
 
