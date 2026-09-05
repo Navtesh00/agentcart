@@ -29,6 +29,43 @@ export const AgentLoginSchema = z.object({
   agent_key: z.string().min(1),
 });
 
+export const ApproveCheckoutSchema = z.object({
+  reserve_id: z.string().min(1, 'reserve_id required'),
+  approval_token: z.string().min(1, 'approval_token required'),
+  idempotency_key: z.string().min(1, 'idempotency_key required'),
+});
+
+export const MerchantSchema = z.object({
+  name: z.string().min(1, 'merchant name required').max(200),
+  catalog_config: z.object({
+    mode: z.enum(['external', 'hosted']),
+    external_api_url: z.string().url().optional(),
+  }).refine(
+    (c) => (c.mode === 'external' ? !!c.external_api_url : true),
+    { message: 'external_api_url required when mode is external', path: ['external_api_url'] }
+  ),
+});
+
+export const HostedProductSchema = z.object({
+  id: z.string().min(1).max(100),
+  name: z.string().min(1).max(200),
+  price: z.number().int().min(0, 'price in paise must be >= 0'),
+  currency: z.string().default('INR'),
+  stock: z.number().int().min(0),
+  category: z.string().optional(),
+  veg: z.boolean().default(true),
+  desc: z.string().optional(),
+  description: z.string().optional(),
+  img: z.string().optional(),
+  image: z.string().optional(),
+});
+
+// Merchant-aware checkout: optional merchant_id routes calcTotal via the
+// merchant's catalog (hosted DB or external API) instead of the legacy global catalog.
+export const MerchantCheckoutSchema = CheckoutSchema.extend({
+  merchant_id: z.string().min(1).optional(),
+});
+
 export function validate(schema) {
   return (req, res, next) => {
     const result = schema.safeParse(req.body);

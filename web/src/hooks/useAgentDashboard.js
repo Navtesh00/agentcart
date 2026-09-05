@@ -30,16 +30,3 @@ export function useAgentDashboard(token) {
 
   return { data, loading, error, refetch: fetchDashboard };
 }
-
-export async function agentLogin(agentKey) {
-  const res = await fetch('/api/agent/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent_key: agentKey }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Login failed');
-  }
-  return res.json();
-}

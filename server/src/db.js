@@ -1,17 +1,13 @@
-import Database from 'better-sqlite3';
+import { Pool } from 'pg';
+import dotenv from 'dotenv';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync, mkdirSync } from 'fs';
 
+dotenv.config({ path: new URL('../../.env', import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1') });
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const dataDir = join(__dirname, 'data');
-if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-const db = new Database(join(dataDir, 'agentcart.db'));
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-db.exec(`
+const CREATE_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
     razorpay_order_id TEXT,
@@ -21,6 +17,7 @@ db.exec(`
     items TEXT,
     reserve_id TEXT,
     explainability TEXT,
+    agent_key TEXT,
     status TEXT DEFAULT 'created',
     payment_id TEXT,
     failure_reason TEXT,
@@ -36,7 +33,19 @@ db.exec(`
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     consent_txn_id TEXT,
-    status TEXT DEFAULT 'active'
+    status TEXT DEFAULT 'active',
+    approval_token TEXT,
+    agent_key TEXT,
+    items TEXT,
+    human_pin TEXT,
+    human_pin_hash TEXT,
+    human_pin_used INTEGER DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS idempotency_keys (
+    key TEXT PRIMARY KEY,
+    response TEXT NOT NULL,
+    created_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS debits (
@@ -75,17 +84,55 @@ db.exec(`
     expires_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS merchants (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    catalog_mode TEXT NOT NULL DEFAULT 'hosted',
+    external_api_url TEXT,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS hosted_products (
+    merchant_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    price INTEGER NOT NULL,
+    currency TEXT DEFAULT 'INR',
+    stock INTEGER NOT NULL DEFAULT 0,
+    category TEXT,
+    veg INTEGER DEFAULT 1,
+    description TEXT,
+    image TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (merchant_id, id),
+    FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE
+  );
+
   CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
   CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at);
   CREATE INDEX IF NOT EXISTS idx_activities_agent ON activities(agent_key);
   CREATE INDEX IF NOT EXISTS idx_activities_created ON activities(created_at);
   CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_key);
-`);
+`;
+
+const MIGRATE_SQL = [
+  "ALTER TABLE orders ADD COLUMN IF NOT EXISTS agent_key TEXT",
+  "ALTER TABLE reserves ADD COLUMN IF NOT EXISTS human_pin TEXT",
+  "ALTER TABLE reserves ADD COLUMN IF NOT EXISTS human_pin_hash TEXT",
+  "ALTER TABLE reserves ADD COLUMN IF NOT EXISTS human_pin_used INTEGER DEFAULT 0",
+];
+
+export async function initDB() {
+  await pool.query(CREATE_TABLES_SQL);
+  for (const sql of MIGRATE_SQL) {
+    try { await pool.query(sql); } catch (_) { /* column already exists */ }
+  }
+}
 
 let seq = Date.now();
 export function nextId(prefix) { return `${prefix}_${seq++}`; }
 
-export function audit(action, input, output, meta = {}) {
+export async function audit(action, input, output, meta = {}) {
   const e = {
     id: nextId('audit'),
     action,
@@ -94,49 +141,57 @@ export function audit(action, input, output, meta = {}) {
     timestamp: new Date().toISOString(),
     ...meta,
   };
-  db.prepare(`INSERT INTO audit (id, action, input, output, timestamp, bounded_check, consent) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(e.id, e.action, e.input, e.output, e.timestamp, e.bounded_check || null, e.consent ? 1 : 0);
+  await pool.query(
+    'INSERT INTO audit (id, action, input, output, timestamp, bounded_check, consent) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+    [e.id, e.action, e.input, e.output, e.timestamp, e.bounded_check || null, e.consent ? 1 : 0]
+  );
   return e;
 }
 
-export function getAudit(limit = 50) {
-  return db.prepare(`SELECT * FROM audit ORDER BY rowid DESC LIMIT ?`).all(limit);
+export async function getAudit(limit = 50) {
+  const r = await pool.query('SELECT * FROM audit ORDER BY id DESC LIMIT $1', [limit]);
+  return r.rows;
 }
 
 // Orders
-export function insertOrder(record) {
-  db.prepare(`INSERT INTO orders (id, razorpay_order_id, amount, currency, receipt, items, reserve_id, explainability, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(record.id, record.razorpay_order_id, record.amount, record.currency, record.receipt, JSON.stringify(record.items), record.reserve_id || null, JSON.stringify(record.explainability), record.status, record.created_at);
+export async function insertOrder(record) {
+  await pool.query(
+    'INSERT INTO orders (id, razorpay_order_id, amount, currency, receipt, items, reserve_id, explainability, agent_key, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+    [record.id, record.razorpay_order_id, record.amount, record.currency, record.receipt, JSON.stringify(record.items), record.reserve_id || null, JSON.stringify(record.explainability), record.agent_key || null, record.status, record.created_at]
+  );
   return record;
 }
 
-export function updateOrder(id, fields) {
+export async function updateOrder(id, fields) {
   const sets = [];
   const vals = [];
   for (const [k, v] of Object.entries(fields)) {
-    if (v !== undefined) { sets.push(`${k} = ?`); vals.push(typeof v === 'object' ? JSON.stringify(v) : v); }
+    if (v !== undefined) { sets.push(`${k} = $${sets.length + 1}`); vals.push(typeof v === 'object' ? JSON.stringify(v) : v); }
   }
   if (sets.length === 0) return;
   vals.push(id);
-  db.prepare(`UPDATE orders SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+  await pool.query(`UPDATE orders SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
 }
 
-export function getOrder(id) {
-  const row = db.prepare(`SELECT * FROM orders WHERE id = ?`).get(id);
+export async function getOrder(id) {
+  const r = await pool.query('SELECT * FROM orders WHERE id = $1', [id]);
+  const row = r.rows[0] || null;
   if (row && row.items) row.items = JSON.parse(row.items);
   if (row && row.explainability) row.explainability = JSON.parse(row.explainability);
   return row;
 }
 
-export function getOrderByRazorpayId(razorpayOrderId) {
-  const row = db.prepare(`SELECT * FROM orders WHERE razorpay_order_id = ?`).get(razorpayOrderId);
+export async function getOrderByRazorpayId(razorpayOrderId) {
+  const r = await pool.query('SELECT * FROM orders WHERE razorpay_order_id = $1', [razorpayOrderId]);
+  const row = r.rows[0] || null;
   if (row && row.items) row.items = JSON.parse(row.items);
   if (row && row.explainability) row.explainability = JSON.parse(row.explainability);
   return row;
 }
 
-export function getAllOrders() {
-  return db.prepare(`SELECT * FROM orders ORDER BY rowid DESC`).all().map(r => {
+export async function getAllOrders() {
+  const r = await pool.query('SELECT * FROM orders ORDER BY id DESC');
+  return r.rows.map(r => {
     if (r.items) r.items = JSON.parse(r.items);
     if (r.explainability) r.explainability = JSON.parse(r.explainability);
     return r;
@@ -144,82 +199,148 @@ export function getAllOrders() {
 }
 
 // Reserves
-export function insertReserve(record) {
-  db.prepare(`INSERT INTO reserves (id, user_phone, max_block, remaining, created_at, expires_at, consent_txn_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(record.id, record.user_phone, record.max_block, record.remaining, record.created_at, record.expires_at, record.consent_txn_id, record.status);
+export async function insertReserve(record) {
+  await pool.query(
+    'INSERT INTO reserves (id, user_phone, max_block, remaining, created_at, expires_at, consent_txn_id, status, approval_token, agent_key, items, human_pin, human_pin_hash, human_pin_used) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)',
+    [record.id, record.user_phone, record.max_block, record.remaining, record.created_at, record.expires_at, record.consent_txn_id, record.status, record.approval_token || null, record.agent_key || null, record.items || null, record.human_pin || null, record.human_pin_hash || null, record.human_pin_used || 0]
+  );
   return record;
 }
 
-export function getReserve(id) {
-  return db.prepare(`SELECT * FROM reserves WHERE id = ?`).get(id);
+export async function getReserve(id) {
+  const r = await pool.query('SELECT * FROM reserves WHERE id = $1', [id]);
+  return r.rows[0] || null;
 }
 
-export function updateReserve(id, fields) {
+export async function updateReserve(id, fields) {
   const sets = [];
   const vals = [];
   for (const [k, v] of Object.entries(fields)) {
-    if (v !== undefined) { sets.push(`${k} = ?`); vals.push(v); }
+    if (v !== undefined) { sets.push(`${k} = $${sets.length + 1}`); vals.push(v); }
   }
   if (sets.length === 0) return;
   vals.push(id);
-  db.prepare(`UPDATE reserves SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+  await pool.query(`UPDATE reserves SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
 }
 
-export function getAllReserves() {
-  return db.prepare(`SELECT * FROM reserves ORDER BY rowid DESC`).all();
+export async function getAllReserves() {
+  const r = await pool.query('SELECT * FROM reserves ORDER BY id DESC');
+  return r.rows;
 }
 
 // Debits
-export function insertDebit(record) {
-  db.prepare(`INSERT INTO debits (id, reserve_id, order_id, amount, reason, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(record.id, record.reserve_id, record.order_id, record.amount, record.reason, record.status, record.created_at);
+export async function insertDebit(record) {
+  await pool.query(
+    'INSERT INTO debits (id, reserve_id, order_id, amount, reason, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+    [record.id, record.reserve_id, record.order_id, record.amount, record.reason, record.status, record.created_at]
+  );
   return record;
 }
 
-export function getAllDebits() {
-  return db.prepare(`SELECT * FROM debits ORDER BY rowid DESC`).all();
+export async function getAllDebits() {
+  const r = await pool.query('SELECT * FROM debits ORDER BY id DESC');
+  return r.rows;
 }
 
-// Activities (per-agent)
-export function logActivity(agentKey, type, data, status = 'success') {
+// Activities
+export async function logActivity(agentKey, type, data, status = 'success') {
   const id = nextId('act');
   const created_at = new Date().toISOString();
-  db.prepare(`INSERT INTO activities (id, agent_key, type, data, status, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
-    .run(id, agentKey, type, typeof data === 'string' ? data : JSON.stringify(data), status, created_at);
+  await pool.query(
+    'INSERT INTO activities (id, agent_key, type, data, status, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+    [id, agentKey, type, typeof data === 'string' ? data : JSON.stringify(data), status, created_at]
+  );
   return { id, agent_key: agentKey, type, data, status, created_at };
 }
 
-export function getAgentActivities(agentKey, limit = 50) {
-  return db.prepare(`SELECT * FROM activities WHERE agent_key = ? ORDER BY rowid DESC LIMIT ?`).all(agentKey, limit);
+export async function getAgentActivities(agentKey, limit = 50) {
+  const r = await pool.query('SELECT * FROM activities WHERE agent_key = $1 ORDER BY id DESC LIMIT $2', [agentKey, limit]);
+  return r.rows;
 }
 
-export function getAgentDashboard(agentKey) {
-  const orders = db.prepare(`SELECT * FROM orders WHERE json_extract(explainability, '$.consent') LIKE '%' || ? || '%' ORDER BY rowid DESC LIMIT 100`).all(agentKey);
-  const activities = db.prepare(`SELECT * FROM activities WHERE agent_key = ? ORDER BY rowid DESC LIMIT 50`).all(agentKey);
-  const totalOrders = db.prepare(`SELECT COUNT(*) as count FROM orders`).get().count;
-  const paidOrders = db.prepare(`SELECT COUNT(*) as count FROM orders WHERE status = 'paid'`).get().count;
-  const failedOrders = db.prepare(`SELECT COUNT(*) as count FROM orders WHERE status = 'failed'`).get().count;
-  const totalRevenue = db.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM orders WHERE status = 'paid'`).get().total;
-  return { totalOrders, paidOrders, failedOrders, totalRevenue, successRate: totalOrders > 0 ? Math.round((paidOrders / totalOrders) * 100) : 0, orders: orders.map(o => { if (o.items) o.items = JSON.parse(o.items); if (o.explainability) o.explainability = JSON.parse(o.explainability); return o; }), activities };
+export async function getAgentDashboard(agentKey) {
+  const orders = (await pool.query('SELECT * FROM orders WHERE agent_key = $1 ORDER BY id DESC LIMIT 100', [agentKey])).rows;
+  const activities = (await pool.query('SELECT * FROM activities WHERE agent_key = $1 ORDER BY id DESC LIMIT 50', [agentKey])).rows;
+  const totalOrders = (await pool.query('SELECT COUNT(*) as count FROM orders WHERE agent_key = $1', [agentKey])).rows[0].count;
+  const paidOrders = (await pool.query("SELECT COUNT(*) as count FROM orders WHERE agent_key = $1 AND status = 'paid'", [agentKey])).rows[0].count;
+  const failedOrders = (await pool.query("SELECT COUNT(*) as count FROM orders WHERE agent_key = $1 AND status = 'failed'", [agentKey])).rows[0].count;
+  const totalRevenue = (await pool.query("SELECT COALESCE(SUM(amount), 0) as total FROM orders WHERE agent_key = $1 AND status = 'paid'", [agentKey])).rows[0].total;
+  return {
+    totalOrders, paidOrders, failedOrders, totalRevenue,
+    successRate: totalOrders > 0 ? Math.round((paidOrders / totalOrders) * 100) : 0,
+    orders: orders.map(o => { if (o.items) o.items = JSON.parse(o.items); if (o.explainability) o.explainability = JSON.parse(o.explainability); if (o.agent_key) delete o.agent_key; return o; }),
+    activities
+  };
+}
+
+// Idempotency
+export async function checkIdempotency(key) {
+  const r = await pool.query('SELECT response FROM idempotency_keys WHERE key = $1', [key]);
+  const row = r.rows[0] || null;
+  return row ? JSON.parse(row.response) : null;
+}
+
+export async function storeIdempotency(key, response) {
+  await pool.query('INSERT INTO idempotency_keys (key, response, created_at) VALUES ($1, $2, $3)', [key, JSON.stringify(response), new Date().toISOString()]);
 }
 
 // Sessions
-export function createSession(agentKey) {
+export async function createSession(agentKey) {
   const id = nextId('sess');
   const created_at = new Date().toISOString();
   const expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  db.prepare(`INSERT INTO sessions (id, agent_key, created_at, expires_at) VALUES (?, ?, ?, ?)`).run(id, agentKey, created_at, expires_at);
+  await pool.query('INSERT INTO sessions (id, agent_key, created_at, expires_at) VALUES ($1, $2, $3, $4)', [id, agentKey, created_at, expires_at]);
   return { id, agent_key: agentKey, created_at, expires_at };
 }
 
-export function getSession(id) {
-  return db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(id);
+export async function getSession(id) {
+  const r = await pool.query('SELECT * FROM sessions WHERE id = $1', [id]);
+  return r.rows[0] || null;
+}
+
+export async function getActiveSession(agentKey) {
+  const r = await pool.query('SELECT * FROM sessions WHERE agent_key = $1 AND expires_at > $2 ORDER BY id DESC LIMIT 1', [agentKey, new Date().toISOString()]);
+  return r.rows[0] || null;
 }
 
 // Reset
-export function resetAll() {
-  db.exec(`DELETE FROM orders; DELETE FROM reserves; DELETE FROM debits; DELETE FROM audit; DELETE FROM activities; DELETE FROM sessions;`);
+export async function resetAll() {
+  await pool.query('DELETE FROM orders; DELETE FROM reserves; DELETE FROM debits; DELETE FROM audit; DELETE FROM activities; DELETE FROM sessions; DELETE FROM hosted_products; DELETE FROM merchants;');
   seq = Date.now();
 }
 
-export default db;
+// Merchants
+export async function insertMerchant(record) {
+  await pool.query('INSERT INTO merchants (id, name, catalog_mode, external_api_url, created_at) VALUES ($1, $2, $3, $4, $5)', [record.id, record.name, record.catalog_mode, record.external_api_url || null, record.created_at]);
+  return record;
+}
+
+export async function getMerchantRow(id) {
+  const r = await pool.query('SELECT * FROM merchants WHERE id = $1', [id]);
+  return r.rows[0] || null;
+}
+
+export async function getAllMerchantRows() {
+  const r = await pool.query('SELECT * FROM merchants ORDER BY id DESC');
+  return r.rows;
+}
+
+export async function upsertHostedProduct(record) {
+  await pool.query(
+    'INSERT INTO hosted_products (merchant_id, id, name, price, currency, stock, category, veg, description, image, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT(merchant_id, id) DO UPDATE SET name=excluded.name, price=excluded.price, currency=excluded.currency, stock=excluded.stock, category=excluded.category, veg=excluded.veg, description=excluded.description, image=excluded.image',
+    [record.merchant_id, record.id, record.name, record.price, record.currency || 'INR', record.stock, record.category || null, record.veg ? 1 : 0, record.description || null, record.image || null, record.created_at]
+  );
+  return record;
+}
+
+export async function getHostedProducts(merchantId) {
+  const r = await pool.query('SELECT * FROM hosted_products WHERE merchant_id = $1 ORDER BY id', [merchantId]);
+  return r.rows;
+}
+
+export async function getHostedProduct(merchantId, productId) {
+  const r = await pool.query('SELECT * FROM hosted_products WHERE merchant_id = $1 AND id = $2', [merchantId, productId]);
+  return r.rows[0] || null;
+}
+
+export default pool;

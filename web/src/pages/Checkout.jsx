@@ -1,18 +1,43 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { CheckCircle2, XCircle, Clock, ArrowRight, Copy } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, ArrowRight, ShieldCheck } from 'lucide-react';
 import { useCart } from '../hooks/useCart.jsx';
+import ApprovalCard from '../components/ApprovalCard.jsx';
 import { toast } from 'sonner';
+
+// Proof-of-work: find nonce so sha256(JSON.stringify(payload)+nonce) starts with '0000'
+// Uses the same string the server verifies against (items + customer).
+async function solvePow(payload) {
+  const body = { ...payload, customer: payload.customer || {} };
+  const base = JSON.stringify({ items: body.items, customer: body.customer });
+  let nonce = 0;
+  let hash = '';
+  do {
+    hash = await digest(base + nonce);
+    nonce++;
+  } while (!hash.startsWith('0000'));
+  return { ...body, pow: String(nonce - 1) };
+}
+async function digest(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 export default function Checkout() {
   const hashParts = window.location.hash.split('?');
   const params = new URLSearchParams(hashParts[1] || '');
   const paymentId = params.get('payment_id');
   const orderId = params.get('order_id');
+  const reserveId = params.get('reserve_id');
+  const capability = params.get('capability');
+
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState(paymentId ? 'success' : orderId ? 'loading' : 'idle');
   const { items, total, clearCart } = useCart();
+
+  // HITL mode: agent sent user here with a reserve awaiting human approval
+  const isHITL = !!reserveId;
 
   // If coming from Razorpay success redirect
   useEffect(() => {
@@ -27,28 +52,46 @@ export default function Checkout() {
     }
   }, [orderId]);
 
+  // Fetch reserve details for HITL approval card
+  const [reserveDetails, setReserveDetails] = useState(null);
+  useEffect(() => {
+    if (isHITL) {
+      fetch(`/api/reserve/${reserveId}`)
+        .then(r => r.json())
+        .then(d => setReserveDetails(d))
+        .catch(() => toast.error('Failed to load reserve details'));
+    }
+  }, [isHITL, reserveId]);
+
+  // Handle successful approval
+  const handleApprovalGranted = (result) => {
+    setOrder(result.order);
+    setStatus('processing');
+    clearCart();
+    // After Razorpay payment settles (via webhook), status will update
+    setTimeout(() => {
+      setStatus('success');
+    }, 3000);
+  };
+
   // Direct checkout without Razorpay (demo mode)
   const handleDirectCheckout = async () => {
     if (items.length === 0) return;
     setLoading(true);
     try {
+      const payload = { items: items.map(i => ({ id: i.id, qty: i.qty })) };
+      const body = await solvePow(payload);
       const res = await fetch('/api/orders/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: items.map(i => ({ id: i.id, qty: i.qty })) }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setOrder(data.order);
       setStatus('processing');
       toast.success('Order placed! Processing payment…');
-
-      // In real mode, open Razorpay Checkout.js popup here
-      // For demo, simulate payment after 2s
-      setTimeout(() => {
-        setStatus('success');
-        clearCart();
-      }, 2000);
+      setTimeout(() => { setStatus('success'); clearCart(); }, 2000);
     } catch (e) {
       toast.error(e.message);
       setStatus('failed');
@@ -57,22 +100,22 @@ export default function Checkout() {
     }
   };
 
-  // Try Razorpay Checkout.js popup
+  // Razorpay Checkout.js popup
   const handleRazorpayCheckout = async () => {
     if (items.length === 0) return;
     setLoading(true);
     try {
-      // Create order on server
+      const payload = { items: items.map(i => ({ id: i.id, qty: i.qty })) };
+      const body = await solvePow(payload);
       const res = await fetch('/api/orders/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: items.map(i => ({ id: i.id, qty: i.qty })) }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setOrder(data.order);
 
-      // Load Razorpay Checkout.js
       if (window.Razorpay) {
         const rzp = new window.Razorpay({
           key: import.meta.env.VITE_RAZORPAY_KEY_ID || 'rzp_test_TXPaQPvvVu85mH',
@@ -88,16 +131,10 @@ export default function Checkout() {
           },
           prefill: { contact: '9999999999', email: 'guest@hotelpranjal.com' },
           theme: { color: '#D4A574' },
-          modal: {
-            ondismiss: function () {
-              setStatus('cancelled');
-              toast.info('Payment cancelled');
-            }
-          }
+          modal: { ondismiss: function () { setStatus('cancelled'); toast.info('Payment cancelled'); } }
         });
         rzp.open();
       } else {
-        // Razorpay SDK not loaded — fall back to demo mode
         toast.info('Razorpay SDK not loaded — demo mode');
         setTimeout(() => { setStatus('success'); clearCart(); }, 2000);
       }
@@ -109,6 +146,7 @@ export default function Checkout() {
     }
   };
 
+  // ── Success state ──
   if (status === 'success' || paymentId) {
     return (
       <div className="min-h-screen bg-noir pt-20 px-6 flex items-center justify-center">
@@ -140,6 +178,7 @@ export default function Checkout() {
     );
   }
 
+  // ── Failed state ──
   if (status === 'failed') {
     return (
       <div className="min-h-screen bg-noir pt-20 px-6 flex items-center justify-center">
@@ -155,7 +194,57 @@ export default function Checkout() {
     );
   }
 
-  // Checkout form
+  // ── Processing state ──
+  if (status === 'processing') {
+    return (
+      <div className="min-h-screen bg-noir pt-20 px-6 flex items-center justify-center">
+        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass max-w-md w-full p-8 text-center">
+          <Clock size={64} className="text-gold mx-auto mb-4 animate-pulse" />
+          <h1 className="font-display text-3xl text-white font-semibold mb-2">Processing Payment…</h1>
+          <p className="text-muted text-sm">Please wait while we confirm your payment.</p>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // ── HITL Approval mode ──
+  if (isHITL && reserveDetails) {
+    return (
+      <div className="min-h-screen bg-noir pt-20 px-6 pb-12">
+        <div className="max-w-lg mx-auto">
+          <div className="flex items-center gap-2 mb-1">
+            <ShieldCheck size={16} className="text-gold" />
+            <p className="text-gold font-mono text-xs tracking-[0.2em] uppercase">Human-in-the-Loop</p>
+          </div>
+          <h1 className="font-display text-3xl font-semibold text-white mb-2">Approve Agent Checkout</h1>
+          <p className="text-muted text-sm mb-6">Your AI agent has prepared this order. Review and approve to proceed with payment.</p>
+
+          <ApprovalCard
+            reserveId={reserveId}
+            capability={capability}
+            items={reserveDetails.items ? JSON.parse(reserveDetails.items) : []}
+            total={reserveDetails.max_block}
+            onApproved={handleApprovalGranted}
+          />
+
+          <a href="#/" className="block text-center text-muted text-xs mt-4 hover:text-gold transition-colors">
+            ← Back to Menu
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  // ── HITL loading ──
+  if (isHITL && !reserveDetails) {
+    return (
+      <div className="min-h-screen bg-noir pt-20 px-6 flex items-center justify-center">
+        <Clock size={32} className="text-gold animate-spin" />
+      </div>
+    );
+  }
+
+  // ── Regular checkout form ──
   return (
     <div className="min-h-screen bg-noir pt-20 px-6 pb-12">
       <div className="max-w-2xl mx-auto">
@@ -171,7 +260,6 @@ export default function Checkout() {
           </div>
         ) : (
           <>
-            {/* Order Summary */}
             <div className="glass p-5 mb-6">
               <h2 className="font-mono text-sm text-white uppercase tracking-wider mb-4">Order Summary</h2>
               <div className="space-y-3">
@@ -194,7 +282,6 @@ export default function Checkout() {
               </div>
             </div>
 
-            {/* Checkout Buttons */}
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={handleRazorpayCheckout}

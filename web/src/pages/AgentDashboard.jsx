@@ -1,63 +1,54 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Lock, LogIn, Activity, Shield, TrendingUp, IndianRupee, Clock, CheckCircle2, XCircle } from 'lucide-react';
-import { useAgentDashboard, agentLogin } from '../hooks/useAgentDashboard.js';
-import { Toaster, toast } from 'sonner';
+import { Lock, LogIn, Activity, Shield, TrendingUp, IndianRupee, Clock, CheckCircle2, XCircle, Copy, Check } from 'lucide-react';
+import { useAgentDashboard } from '../hooks/useAgentDashboard.js';
+import { Toaster } from 'sonner';
 
 export default function AgentDashboard() {
   const [token, setToken] = useState(() => {
     const params = new URLSearchParams(window.location.hash.split('?')[1]);
     return params.get('token') || '';
   });
-  const [agentKey, setAgentKey] = useState('');
-  const [logging, setLogging] = useState(false);
+  const [copied, setCopied] = useState(false);
   const { data, loading, error } = useAgentDashboard(token);
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    if (!agentKey.trim()) return;
-    setLogging(true);
+  const copyToken = async () => {
     try {
-      const result = await agentLogin(agentKey.trim());
-      setToken(result.token);
-      window.location.hash = `#/dashboard?token=${result.token}`;
-      toast.success('Logged in as agent');
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setLogging(false);
+      await navigator.clipboard.writeText(token);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
     }
   };
 
-  // Login form
+  // Login form — requires a session token issued by the agent via /api/agent/login (HMAC signed)
   if (!token) {
     return (
       <div className="min-h-screen bg-noir pt-20 px-6 flex items-center justify-center">
         <Toaster position="top-right" theme="dark" />
         <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass max-w-sm w-full p-8">
-          <div className="flex items-center gap-2 mb-6">
+          <div className="flex items-center gap-2 mb-3">
             <Lock size={20} className="text-gold" />
-            <h1 className="font-display text-2xl text-white font-semibold">Agent Login</h1>
+            <h1 className="font-display text-2xl text-white font-semibold">Agent Dashboard</h1>
           </div>
-          <form onSubmit={handleLogin}>
-            <label className="block text-muted text-xs font-mono uppercase tracking-wider mb-2">Agent API Key</label>
-            <input
-              type="text"
-              value={agentKey}
-              onChange={e => setAgentKey(e.target.value)}
-              placeholder="agent_demo_key_123"
-              className="w-full bg-noir border border-glass rounded-lg px-4 py-3 text-sm text-white placeholder-muted outline-none focus:border-gold transition-colors mb-4 font-mono"
-            />
-            <button
-              type="submit"
-              disabled={logging || !agentKey.trim()}
-              className="w-full bg-gold hover:bg-gold/80 text-white py-3 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {logging ? <Clock size={14} className="animate-spin" /> : <LogIn size={14} />}
-              Sign In
-            </button>
-          </form>
-          <p className="text-muted text-xs text-center mt-4">Demo key: <span className="font-mono text-gold">agent_demo_key_123</span></p>
+          <p className="text-muted text-xs mb-6 leading-relaxed">
+            This dashboard is authenticated with a per-agent HMAC session token. Ask the agent
+            (via MCP) to log in and it will provide a token you can open this page with:
+            <span className="block mt-2 font-mono text-gold">#/dashboard?token=…</span>
+          </p>
+          <p className="text-muted text-[11px] mb-4">
+            Tip: copy your session token (now shown on the dashboard header) and save it to reopen this view later without logging in again.
+          </p>
+          <label className="block text-muted text-xs font-mono uppercase tracking-wider mb-2">Session Token</label>
+          <input
+            type="text"
+            value={token}
+            onChange={e => { setToken(e.target.value); if (e.target.value) window.location.hash = `#/dashboard?token=${e.target.value}`; }}
+            placeholder="paste session token"
+            className="w-full bg-noir border border-glass rounded-lg px-4 py-3 text-sm text-white placeholder-muted outline-none focus:border-gold transition-colors mb-4 font-mono"
+          />
+          <p className="text-muted text-[11px] text-center">Static keys are not accepted — only HMAC-issued session tokens.</p>
         </motion.div>
       </div>
     );
@@ -115,6 +106,15 @@ export default function AgentDashboard() {
             <p className="text-gold font-mono text-xs tracking-[0.2em] uppercase mb-1">Agent Dashboard</p>
             <h1 className="font-display text-3xl font-semibold text-white">Hotel Pranjal — Live Ops</h1>
             <p className="text-muted text-sm mt-1">Auto-refresh 30s · Bearer token auth</p>
+            <button
+              onClick={copyToken}
+              title="Copy session ID — keep it to reopen this dashboard later"
+              className="mt-3 inline-flex items-center gap-2 font-mono text-[11px] text-muted hover:text-gold border border-glass rounded-md px-2.5 py-1.5 transition-colors"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-mint" />
+              <span className="truncate max-w-[320px]">Session: {token}</span>
+              {copied ? <Check size={12} className="text-mint" /> : <Copy size={12} />}
+            </button>
           </div>
           <button onClick={() => { setToken(''); window.location.hash = '#/dashboard'; }} className="text-muted hover:text-white text-xs font-mono transition-colors">
             Logout
