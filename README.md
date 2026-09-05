@@ -918,7 +918,7 @@ Watch the system block the transaction and generate the fallback path.
 ![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=node.js&logoColor=white)
 ![Express](https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white)
 ![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
-![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-003B57?style=for-the-badge&logo=postgresql&logoColor=white)
 ![Razorpay](https://img.shields.io/badge/Razorpay-3395FF?style=for-the-badge)
 ![MCP](https://img.shields.io/badge/MCP-Agent%20Tools-purple?style=for-the-badge)
 
