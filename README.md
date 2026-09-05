@@ -1011,34 +1011,113 @@ Test card:
 
 ---
 
-# 🏭 What would production require?
+# 🏭 This is not production-ready. Here is the exact plan to make it so.
 
-This is a buildathon prototype, not a claim of production readiness.
+This is a buildathon prototype, built solo, on free-tier tools, in limited time. We are not claiming otherwise. What we are claiming is that we know **exactly** where the gaps are, why each one exists, and what specifically closes it — because we found most of these by actively trying to break our own system, not by guessing.
 
-The important part is that the remaining gaps are understood.
+> There is a difference between **"this proves the model works"** and **"this is ready to process production-scale financial traffic."** AgentCart is currently the first. Below is the concrete plan for the second.
 
-| Area                 | Buildathon        | Production                     |
-| -------------------- | ----------------- | ------------------------------- |
-| PIN delivery         | Browser endpoint  | Isolated SMS/email channel     |
-| Database             | SQLite + WAL      | PostgreSQL + row locking       |
-| Catalog              | Live fetching     | TTL cache / Redis              |
-| Pagination           | Up to 50          | Default 10 + paging            |
-| Reserve cancellation | Not user-facing   | Authenticated cancellation API |
-| API versioning       | `/api/...`        | `/api/v1/...`                  |
-| Webhooks             | Direct processing | Durable retry queue            |
-| Deployment           | Free tier         | Multi-instance infrastructure  |
+---
 
-### Why be explicit about this?
+## 🔓 Finding #1 — The Human Approval step can currently be bypassed by a fully autonomous agent
 
-Because there is a difference between:
+This is the most important gap, and it deserves to be named specifically rather than folded into a generic "PIN delivery" line.
 
-> **"This proves the model works."**
+**The intended design:** an agent can prepare a cart, but only a human — entering a PIN the agent never sees — can release the payment.
 
-and:
+**What we found when we traced the actual bypass path:**
 
-> **"This is ready to process production-scale financial traffic."**
+```text
+1. POST /api/reserve/create           (agent, HMAC)  → reserve_id
+2. POST /api/approval/request-token   (agent, HMAC)  → capability
+3. POST /api/approval/pin             (capability)   → returns the PIN directly
+4. POST /api/checkout/create          (agent, HMAC)  → cart prepared
+5. POST /api/checkout/approve         (capability + PIN) → payment executes
+```
 
-AgentCart is currently demonstrating the first.
+**The problem:** nothing stops the *same agent* that obtained the capability in step 2 from also calling step 3 itself. The PIN is delivered over the same HTTP channel the agent already has full access to — it never actually leaves that channel to reach a human through an independent path.
+
+**Why this happened:** "human-in-the-loop" was implemented as an *API shape* (a token + a PIN endpoint) rather than an *out-of-band channel* (a delivery method the calling agent structurally cannot intercept).
+
+**The fix, concretely:**
+- Remove `POST /api/approval/pin` entirely as a pull-based endpoint
+- Push the PIN via a channel with no HTTP path back to the agent: SMS (Twilio, MSG91) or email (SendGrid, or free Gmail SMTP via Nodemailer for early stage)
+- The human receives the PIN on their phone/inbox; the agent's capability token alone is never sufficient to complete payment
+
+We are documenting this ourselves, unprompted, because a security model is only credible if its own builders can name where it currently fails.
+
+---
+
+## 🔁 Finding #2 — No way to recognize the same person across sessions, without breaking the "fully automatic" promise
+
+**The tension:** asking for a phone number or email at checkout adds friction and breaks the pitch — "every chat becomes a checkout" stops being true the moment a form appears. But with zero identity, the same person looks like a brand-new user every session.
+
+**The design we'd ship:** a `session_id` returned automatically at reserve-creation time, with zero required input:
+
+```text
+POST /api/reserve/create
+→ { reserve_id, session_id: "sess_abc123", ... }
+
+Agent to user: "Your order session is sess_abc123 — 
+                save this if you want to check your orders later."
+```
+
+The user can optionally save it. Contact info (phone/email) stays fully optional and unverified — never blocking checkout, never used to gate anything. This preserves the automatic flow while giving anyone who wants continuity a way to get it.
+
+**Read endpoint this enables:**
+```text
+GET /api/session/:id/orders   (no auth needed — the session_id IS the credential)
+```
+
+---
+
+## 🏬 Finding #3 — Multi-merchant support works for a handful, not "many"
+
+We already support two catalog modes — `hosted` (stored in our DB) and `external` (fetched live from a merchant's own API). Hosted mode holds up fine. External mode does not, past a small number of merchants, for a specific reason:
+
+**The problem:** every catalog browse re-fetches live from the external URL, with no caching. At 50+ merchants under real traffic, that's 50+ live outbound HTTP calls *per browse action*, each with an 8-second timeout ceiling.
+
+**The fix, in two stages:**
+- **Now (free):** `node-cache` — 60-second TTL, in-memory, zero cost, already sufficient for a single server instance
+- **At real scale (still free to start):** Upstash Redis free tier (10,000 requests/day) once you run more than one server instance and need the cache shared across them
+
+**Also needed:** external catalogs using authenticated APIs currently can't be reached — we send no auth header. Fix is a stored `external_api_key` per merchant, sent as `Authorization: Bearer <key>`.
+
+---
+
+## 🧾 Finding #4 — What Razorpay's rails don't give you, that agentic commerce needs
+
+This isn't a criticism of Razorpay — it's the specific gap AgentCart is built to sit in.
+
+| Missing primitive | Why it matters | Does AgentCart cover it? |
+|---|---|---|
+| **Agent identity** | Razorpay can't tell "a script called this API" from "a person did" — no accountability trail at the payment layer | Partially — HMAC per-agent secrets + audit trail, but still app-level, not infrastructure-level |
+| **Machine-readable catalog** | An LLM needs to know what exists, at what price, before it can buy anything — Razorpay has no concept of this | Yes — `/api/catalog` + `/llms.txt` |
+| **Server-enforced budget bounds** | Nothing in Razorpay's own rails stops an agent from attempting to overspend before the request even reaches a human | Yes — bounded Reserve, checked before every debit |
+| **Agent-readable errors** | Razorpay's error codes are built for a developer reading a dashboard, not an LLM deciding what to do next | Not yet — real gap, unaddressed |
+| **Async agent feedback loop** | A webhook tells *your server* what happened — there's no standard way to pipe that back into a *running agent* mid-conversation | Not yet — real gap, unaddressed |
+
+The two unaddressed rows above are the honest next frontier — not because they're hard to imagine, but because they need actual production traffic to design correctly rather than guess at.
+
+---
+
+## 💰 Full paid-tool roadmap (what's blocked purely by budget, not by design)
+
+Everything below is architecturally ready to plug in. It's not built only because it costs money we don't have for a buildathon submission — not because we don't know how.
+
+| Feature | Free tier to start | What it unlocks |
+|---|---|---|
+| Out-of-band PIN delivery | Twilio SMS (~$0.0075/msg), MSG91 (cheaper, India-based), or Gmail SMTP via Nodemailer (free, 500/day) | Closes Finding #1 — the real human-approval gap |
+| PostgreSQL | Neon.tech or Supabase (both free tier, no card) | Row-level locking (`SELECT ... FOR UPDATE`) — stops two simultaneous checkouts racing the same reserve balance |
+| Distributed cache | Upstash Redis (free, 10k req/day) | Multi-instance external-catalog caching at real merchant scale |
+| Webhook reliability | Inngest (free tier, 50k runs/month) or Bull + Redis | Retry queue so a sleeping server doesn't silently drop `payment.captured` events |
+| Phone/email verification | Twilio Verify (~$0.05/verification) or Firebase Phone Auth (free, 10k/month) | Turns the optional `session_id` continuity into a verified one, if a merchant ever needs that |
+
+---
+
+### The honest summary
+
+We stress-tested our own trust boundary and found where it actually breaks — not where we assumed it would. That's a more credible signal than a system with no documented weaknesses, because every real payment system has some, and the difference between a hackathon demo and a real product is whether the builders know exactly which ones and exactly how to close them.
 
 ---
 
