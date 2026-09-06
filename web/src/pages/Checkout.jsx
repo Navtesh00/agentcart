@@ -4,6 +4,7 @@ import { CheckCircle2, XCircle, Clock, ArrowRight, ShieldCheck } from 'lucide-re
 import { useCart } from '../hooks/useCart.jsx';
 import ApprovalCard from '../components/ApprovalCard.jsx';
 import { toast } from 'sonner';
+import { apiFetch } from '../api.js';
 
 // Proof-of-work: find nonce so sha256(JSON.stringify(payload)+nonce) starts with '0000'
 // Uses the same string the server verifies against (items + customer).
@@ -42,12 +43,10 @@ export default function Checkout() {
   // If coming from Razorpay success redirect
   useEffect(() => {
     if (orderId) {
-      fetch(`/api/orders/${orderId}`)
-        .then(r => r.json())
+            apiFetch(`/api/orders/${orderId}`)
         .then(d => { setOrder(d); setStatus(d.status === 'paid' ? 'success' : d.status === 'failed' ? 'failed' : 'processing'); })
         .catch(() => setStatus('failed'))
-        .finally(() => setLoading(false));
-    } else {
+        .finally(() => setLoading(false));    } else {
       setLoading(false);
     }
   }, [orderId]);
@@ -56,8 +55,7 @@ export default function Checkout() {
   const [reserveDetails, setReserveDetails] = useState(null);
   useEffect(() => {
     if (isHITL) {
-      fetch(`/api/reserve/${reserveId}`)
-        .then(r => r.json())
+      apiFetch(`/api/reserve/${reserveId}`)
         .then(d => setReserveDetails(d))
         .catch(() => toast.error('Failed to load reserve details'));
     }
@@ -81,13 +79,10 @@ export default function Checkout() {
     try {
       const payload = { items: items.map(i => ({ id: i.id, qty: i.qty })) };
       const body = await solvePow(payload);
-      const res = await fetch('/api/orders/create', {
+      const data = await apiFetch('/api/orders/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
       setOrder(data.order);
       setStatus('processing');
       toast.success('Order placed! Processing payment…');
@@ -107,13 +102,10 @@ export default function Checkout() {
     try {
       const payload = { items: items.map(i => ({ id: i.id, qty: i.qty })) };
       const body = await solvePow(payload);
-      const res = await fetch('/api/orders/create', {
+      const data = await apiFetch('/api/orders/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
       setOrder(data.order);
 
       if (window.Razorpay) {

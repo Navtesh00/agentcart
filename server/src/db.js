@@ -4,8 +4,35 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 dotenv.config({ path: new URL('../../.env', import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1') });
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+const isProduction = process.env.NODE_ENV === 'production';
+
+function getDatabaseConfig() {
+  const databaseUrl = process.env.DATABASE_URL;
+
+  if (!databaseUrl) {
+    if (isProduction) {
+      console.error('❌ FATAL: DATABASE_URL environment variable is not set.');
+      console.error('   In production (Render), set DATABASE_URL to your PostgreSQL connection string.');
+      console.error('   Example: postgresql://user:pass@host:5432/dbname?sslmode=require');
+      process.exit(1);
+    }
+    // Local development: allow fallback to localhost if .env has DATABASE_URL pointing to local PG
+    // This will still throw a connection error if local PG isn't running, which is expected.
+  }
+
+  const config = { connectionString: databaseUrl };
+
+  if (isProduction && databaseUrl) {
+    // Hosted PostgreSQL (Render, Supabase, Neon, etc.) typically requires SSL
+    // rejectUnauthorized: false is needed for some managed PostgreSQL providers
+    config.ssl = { rejectUnauthorized: false };
+  }
+
+  return config;
+}
+
+const pool = new Pool(getDatabaseConfig());
 
 const CREATE_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS orders (

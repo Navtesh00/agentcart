@@ -19,7 +19,7 @@ export default function Restaurant({ onCheckout }) {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-      apiFetch('/api/catalog')
+    apiFetch('/api/catalog')
       .then(d => setDishes(d.products || []))
       .catch(() => {})
       .finally(() => setLoading(false));

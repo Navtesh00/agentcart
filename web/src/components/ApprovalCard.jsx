@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ShieldCheck, AlertCircle, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { apiFetch } from '../api.js';
 
 /**
  * ApprovalCard - Human-in-the-Loop approval UI
@@ -34,18 +35,11 @@ export default function ApprovalCard({ reserveId, capability, items, total, onAp
     }
     setPinLoading(true);
     try {
-      const res = await fetch('/api/approval/pin', {
+      const data = await apiFetch('/api/approval/pin', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-capability': capability,
-        },
+        headers: { 'x-capability': capability },
         body: JSON.stringify({ reserve_id: reserveId }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to retrieve PIN');
-      }
       setHumanPin(data.human_pin);
       setShowPin(true);
       toast.success('PIN retrieved. Enter it below to approve.');
@@ -72,22 +66,15 @@ export default function ApprovalCard({ reserveId, capability, items, total, onAp
       // Generate idempotency key for safe retries
       const idempotencyKey = `approve_${reserveId}_${Date.now()}`;
       
-      const res = await fetch('/api/checkout/approve', {
+      const data = await apiFetch('/api/checkout/approve', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-capability': capability,
-        },
+        headers: { 'x-capability': capability },
         body: JSON.stringify({
           reserve_id: reserveId,
           human_pin: pin,
           idempotency_key: idempotencyKey,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Approval failed');
-      }
       setStatus('approved');
       toast.success('Checkout approved! Redirecting to payment...');
       if (onApproved) {

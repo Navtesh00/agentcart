@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { apiFetch } from '../api.js';
 
 export function useAgentDashboard(token) {
   const [data, setData] = useState(null);
@@ -8,11 +9,9 @@ export function useAgentDashboard(token) {
   const fetchDashboard = useCallback(async () => {
     if (!token) return;
     try {
-      const res = await fetch('/api/agent/dashboard', {
+      const json = await apiFetch('/api/agent/dashboard', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error(`Dashboard fetch failed: ${res.status}`);
-      const json = await res.json();
       setData(json);
       setError(null);
     } catch (e) {
