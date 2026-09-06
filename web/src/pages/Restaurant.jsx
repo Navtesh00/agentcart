@@ -6,6 +6,7 @@ import DishCard from '../components/DishCard.jsx';
 import CartDrawer from '../components/CartDrawer.jsx';
 import ChatWidget from '../components/ChatWidget.jsx';
 import { useCart } from '../hooks/useCart.jsx';
+import { apiFetch } from '../api.js';
 
 const CATEGORIES = ['All', 'Paneer', 'Rice', 'Dal', 'Pavbhaji', 'Thali', 'Rotis', 'Fries', 'Chinese', 'Mocktails'];
 
@@ -18,8 +19,7 @@ export default function Restaurant({ onCheckout }) {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    fetch('/api/catalog')
-      .then(r => r.json())
+      apiFetch('/api/catalog')
       .then(d => setDishes(d.products || []))
       .catch(() => {})
       .finally(() => setLoading(false));
