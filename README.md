@@ -1197,7 +1197,7 @@ The agent should be able to act **on behalf of the user** without being able to 
 
 <br>
 
-<a href="https://agentcart-glit.vercel.app">
+<a href="https://agentcart-gilt.vercel.app">
 <img src="https://img.shields.io/badge/🚀%20LIVE%20DEMO-brightgreen?style=for-the-badge" />
 </a>
 
